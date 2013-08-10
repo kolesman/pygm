@@ -3,6 +3,8 @@ import numpy as np
 
 import opengm
 
+import dai
+
 
 class Factor(object):
 
@@ -20,7 +22,7 @@ class Factor(object):
             illegal_values = values <= 0
             if np.any(illegal_values):
                 values[illegal_values] = np.finfo(np.float32).eps
-                sys.stderr.write("Warning: illegal probability values(<= 0). These values replaced with machine precision for float32\n")
+                sys.stderr.write("Warning: illegal probability values(<= 0). These values replaced with machine precision value for float32\n")
             self.__values = -np.log(values)
         else:
             self.__values = values
@@ -69,6 +71,14 @@ class GraphicalModel(object):
             self.__cardinalities[variable] = cardinality
 
     @property
+    def n_factors(self):
+        return len(self.__factors)
+
+    @property
+    def n_vars(self):
+        return len(self.__cardinalities)
+
+    @property
     def factors(self):
         return self.__factors
 
@@ -89,6 +99,31 @@ class GraphicalModel(object):
 
         return openGMModel
 
+    def _constructLibDAIModel(self):
+
+        var_list = []
+
+        for i, cardinality in enumerate(self.cardinalities):
+            var_list.append(dai.Var(i, cardinality))
+
+        factor_list = []
+        for factor in self.factors:
+            factor = dai.Factor(dai.VarSet(*[var_list[i] for i in factor.members]))
+            factor_list.append(factor)
+
+        for i, (dai_factor, factor) in enumerate(zip(factor_list, self.factors)):
+            values = factor.values.ravel()
+            for j, value in enumerate(values):
+                dai_factor[j] = float(np.exp(-value))
+
+        dai_vector_factors = dai.VecFactor()
+        [dai_vector_factors.append(dai_factor) for dai_factor in factor_list]
+
+        dai_model = dai.FactorGraph(dai_vector_factors)
+
+        self.dai_factor_list = factor_list
+        return dai_model
+
     def getMapState(self, alg, params):
         gm = self._constructOpenGMModel()
 
@@ -97,6 +132,35 @@ class GraphicalModel(object):
 
         inference_alg.infer()
         return inference_alg.arg()
+
+    def probInference(self, alg, params={}):
+        gm = self._constructLibDAIModel()
+
+        parameters = {}
+        if alg == 'BP':
+            parameters = {'inference': 'SUMPROD', 'updates': 'SEQMAX', 'tol': '1e-6', 'maxiter': '100', 'logdomain': '1'}
+        if alg == 'JTree':
+            parameters = {'inference': 'SUMPROD', 'updates': 'HUGIN', 'tol': '1e-6'}
+        parameters.update(params)
+
+        opts = dai.PropertySet()
+        for key, value in parameters.items():
+            opts[key] = value
+
+        algorithm = getattr(dai, alg)
+
+        prob_model = algorithm(gm, opts)
+        prob_model.init()
+        prob_model.run()
+
+        factor_values = []
+        for factor, dai_factor in zip(self.factors, self.dai_factor_list):
+            belief = prob_model.belief(dai_factor.vars())
+            shape = tuple([self.cardinalities[member] for member in factor.members])
+            values = np.array([belief[i] for i in range(np.prod(shape))])
+            factor_values.append(values.reshape(shape))
+
+        return factor_values
 
 
 def main():
