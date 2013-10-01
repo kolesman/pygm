@@ -50,9 +50,28 @@ class Factor(object):
 
 class GraphicalModel(object):
 
-    def __init__(self, factors):
-        #assert(all([isinstance(factor, Factor) for factor in factors]))
+    def __init__(self, factors, normalize_unary_with_pairwise=False):
+
         self.__factors = factors
+
+        ############################
+        new_factors = []
+        if normalize_unary_with_pairwise:
+            unary_dict = {}
+            for factor in factors:
+                if len(factor.members) == 1:
+                    unary_dict[factor.members[0]] = np.exp(-factor.values)
+                    new_factors.append(factor)
+
+            for factor in factors:
+                if len(factor.members) == 2:
+                    members = factor.members
+                    prob_values = np.exp(-factor.values)
+                    new_values = (prob_values / unary_dict[members[0]]).T / unary_dict[members[1]]
+                    new_factors.append(Factor(members, new_values, probability=True))
+
+            self.__factors = new_factors
+        ############################
 
         # compute variable cardinalities
         cardinalities_dict = {}
