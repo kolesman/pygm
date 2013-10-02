@@ -5,6 +5,8 @@ import opengm
 
 import dai
 
+from collections import defaultdict
+
 
 class Factor(object):
 
@@ -16,16 +18,19 @@ class Factor(object):
         assert(isinstance(values, np.ndarray))
         assert(len(values.shape) == len(members))
 
-        values = values.astype('float32')
+        values = values.astype('longdouble')
 
         if probability:
             illegal_values = values <= 0
             if np.any(illegal_values):
-                values[illegal_values] = np.finfo(np.float32).eps
+                values[illegal_values] = 10e-9
                 sys.stderr.write("Warning: illegal probability values(<= 0). These values replaced with machine precision value for float32\n")
+            values = values / np.sum(values)
             self.__values = -np.log(values)
         else:
-            self.__values = values
+            raise NotImplemented
+            #values = values / sum(values)
+            #self.__values = values
 
     @property
     def members(self):
@@ -50,28 +55,46 @@ class Factor(object):
 
 class GraphicalModel(object):
 
-    def __init__(self, factors, normalize_unary_with_pairwise=False):
+    def __init__(self, factors, normalize_unary_with_pairwise=(False, None)):
 
         self.__factors = factors
 
         ############################
         new_factors = []
-        if normalize_unary_with_pairwise:
-            unary_dict = {}
+        if normalize_unary_with_pairwise[0]:
             for factor in factors:
                 if len(factor.members) == 1:
-                    unary_dict[factor.members[0]] = np.exp(-factor.values)
                     new_factors.append(factor)
+
+            margin_unary_factors = defaultdict(list)
 
             for factor in factors:
                 if len(factor.members) == 2:
                     members = factor.members
                     prob_values = np.exp(-factor.values)
-                    new_values = (prob_values / unary_dict[members[0]]).T / unary_dict[members[1]]
+                    n1 = np.sum(prob_values, axis=1)
+                    margin_unary_factors[members[0]].append(n1)
+                    #new_factors.append(Factor((members[0], ), n1, probability=True))
+                    n2 = np.sum(prob_values, axis=0)
+                    margin_unary_factors[members[1]].append(n2)
+                    #new_factors.append(Factor((members[1], ), n2, probability=True))
+                    new_values = (prob_values.T / n1.T).T / n2
+                    new_values = new_values / np.sum(new_values)
+
+                    #alpha = 1.0
+                    #new_values = (1.0 / (1.0 + alpha)) * new_values + (alpha / (1.0 + alpha)) * (1.0 / 81.0)
+
                     new_factors.append(Factor(members, new_values, probability=True))
+
+            #for member in margin_unary_factors.keys():
+            #    new_factors.append(Factor((member, ), np.average(margin_unary_factors[member], axis=0), probability=True))
+
+            print(len(new_factors))
 
             self.__factors = new_factors
         ############################
+
+        print(len(self.__factors))
 
         # compute variable cardinalities
         cardinalities_dict = {}
