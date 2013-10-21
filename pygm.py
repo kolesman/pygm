@@ -14,11 +14,11 @@ class Factor(object):
         self.__n = len(members)
         self.__members = members
 
+        values = np.array(values).astype('longdouble')
+
         assert(isinstance(members, tuple))
         assert(isinstance(values, np.ndarray))
         assert(len(values.shape) == len(members))
-
-        values = values.astype('longdouble')
 
         if probability:
             illegal_values = values <= 0
@@ -28,9 +28,8 @@ class Factor(object):
             values = values / np.sum(values)
             self.__values = -np.log(values)
         else:
-            raise NotImplemented
-            #values = values / sum(values)
-            #self.__values = values
+            #raise NotImplemented
+            self.__values = values
 
     @property
     def members(self):
@@ -39,6 +38,10 @@ class Factor(object):
     @property
     def values(self):
         return self.__values
+
+    @property
+    def probs(self):
+        return np.exp(-self.__values)
 
     @property
     def order(self):
@@ -81,20 +84,10 @@ class GraphicalModel(object):
                     new_values = (prob_values.T / n1.T).T / n2
                     new_values = new_values / np.sum(new_values)
 
-                    #alpha = 1.0
-                    #new_values = (1.0 / (1.0 + alpha)) * new_values + (alpha / (1.0 + alpha)) * (1.0 / 81.0)
-
                     new_factors.append(Factor(members, new_values, probability=True))
-
-            #for member in margin_unary_factors.keys():
-            #    new_factors.append(Factor((member, ), np.average(margin_unary_factors[member], axis=0), probability=True))
-
-            print(len(new_factors))
 
             self.__factors = new_factors
         ############################
-
-        print(len(self.__factors))
 
         # compute variable cardinalities
         cardinalities_dict = {}
@@ -166,6 +159,34 @@ class GraphicalModel(object):
         self.dai_factor_list = factor_list
         return dai_model
 
+    def insertObservation(self, observation, partial):
+        if self.max_order > 2:
+            raise NotImplemented
+
+        observation_dict = dict([(i, single) for i, (take, single) in enumerate(zip(partial, observation)) if take])
+
+        new_factors = []
+        for factor in self.__factors:
+            members = factor.members
+            if len(members) == 1:
+                if members[0] in observation_dict:
+                    new_factor = Factor(members, [1.0], probability=True)
+                else:
+                    new_factor = factor
+            if len(members) == 2:
+                if members[0] in observation_dict and members[1] in observation_dict:
+                    new_factor = Factor(members, [[1.0]], probability=True)
+                elif members[0] in observation_dict:
+                    obs = observation_dict[members[0]]
+                    new_factor = Factor(members, [factor.probs[obs]], probability=True)
+                elif members[1] in observation_dict:
+                    obs = observation_dict[members[1]]
+                    new_factor = Factor(members, np.array([factor.probs[:, obs]]).T, probability=True)
+                else:
+                    new_factor = factor
+            new_factors.append(new_factor)
+        return GraphicalModel(new_factors)
+
     def getMapState(self, alg, params):
         gm = self._constructOpenGMModel()
 
@@ -173,7 +194,15 @@ class GraphicalModel(object):
         inference_alg = getattr(opengm.inference, alg)(gm, parameter=opengm_params)
 
         inference_alg.infer()
-        return inference_alg.arg()
+        map_state = inference_alg.arg()
+
+        if alg == 'Mqpbo':
+            partial = inference_alg.partialOptimality()
+            new_fg = self.insertObservation(map_state, partial)
+            comp_map_state = new_fg.getMapState('TrwsExternal', {'steps': 10})
+            map_state[~partial] = comp_map_state[~partial]
+
+        return map_state
 
     def probInference(self, alg, params={}):
         gm = self._constructLibDAIModel()
