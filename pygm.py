@@ -105,6 +105,22 @@ class GraphicalModel(object):
         for variable, cardinality in cardinalities_dict.items():
             self.__cardinalities[variable] = cardinality
 
+    @staticmethod
+    def generateRandomGrid(n, k):
+        factor_list = []
+        for i in range(n):
+            for j in range(n):
+                members = (i + j * n, )
+                values = np.random.random(k)
+                f = Factor(members, values)
+                factor_list.append(f)
+            for j in range(1, n):
+                for members in [(i * n + (j - 1), i * n + j), ((j - 1) * n + i, j * n + i)]:
+                    values = np.random.random((k, k))
+                    f = Factor(members, values)
+                    factor_list.append(f)
+        return GraphicalModel(factor_list)
+
     @property
     def n_factors(self):
         return len(self.__factors)
@@ -159,7 +175,7 @@ class GraphicalModel(object):
         self.dai_factor_list = factor_list
         return dai_model
 
-    def insertObservation(self, observation, partial):
+    def _insertObservation(self, observation, partial):
         if self.max_order > 2:
             raise NotImplemented
 
@@ -187,6 +203,16 @@ class GraphicalModel(object):
             new_factors.append(new_factor)
         return GraphicalModel(new_factors)
 
+    def Energy(self, state):
+        state_dict = dict(enumerate(state))
+
+        energy = 0.0
+        for factor in self.factors:
+            assig = tuple([state_dict[member] for member in factor.members])
+            energy += factor.values[assig]
+
+        return energy
+
     def getMapState(self, alg, params):
         gm = self._constructOpenGMModel()
 
@@ -198,7 +224,7 @@ class GraphicalModel(object):
 
         if alg == 'Mqpbo':
             partial = inference_alg.partialOptimality()
-            new_fg = self.insertObservation(map_state, partial)
+            new_fg = self._insertObservation(map_state, partial)
             comp_map_state = new_fg.getMapState('TrwsExternal', {'steps': 10})
             map_state[~partial] = comp_map_state[~partial]
 
