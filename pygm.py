@@ -5,7 +5,11 @@ import opengm
 
 import dai
 
+from compiler.ast import flatten
+
 from collections import defaultdict
+
+import time
 
 
 class Factor(object):
@@ -28,7 +32,6 @@ class Factor(object):
             values = values / np.sum(values)
             self.__values = -np.log(values)
         else:
-            #raise NotImplemented
             self.__values = values
 
     @property
@@ -58,11 +61,11 @@ class Factor(object):
 
 class GraphicalModel(object):
 
-    def __init__(self, factors, normalize_unary_with_pairwise=(False, None)):
+    def __init__(self, factors, make_tree_decomposition=False, normalize_unary_with_pairwise=(False, None)):
 
         self.__factors = factors
 
-        ############################
+        ############################ REMOVE
         new_factors = []
         if normalize_unary_with_pairwise[0]:
             for factor in factors:
@@ -105,8 +108,11 @@ class GraphicalModel(object):
         for variable, cardinality in cardinalities_dict.items():
             self.__cardinalities[variable] = cardinality
 
+        if make_tree_decomposition:
+            self.tree_decomposition = self._tree_decomposition()
+
     @staticmethod
-    def generateRandomGrid(n, k):
+    def generateRandomGrid(n, k, make_tree_decomposition=True):
         factor_list = []
         for i in range(n):
             for j in range(n):
@@ -119,7 +125,7 @@ class GraphicalModel(object):
                     values = np.random.random((k, k))
                     f = Factor(members, values)
                     factor_list.append(f)
-        return GraphicalModel(factor_list)
+        return GraphicalModel(factor_list, make_tree_decomposition=make_tree_decomposition)
 
     @property
     def n_factors(self):
@@ -140,6 +146,45 @@ class GraphicalModel(object):
     @property
     def cardinalities(self):
         return self.__cardinalities
+
+    def _check_coverage(self, decomposition):
+
+        if self.max_order > 2:
+            raise NotImplemented
+
+        edges_decomposition = set(sum([[factor.members for factor in graph.factors] for graph in decomposition], []))
+        edges_self = set([factor.members for factor in self.factors if len(factor.members) == 2])
+        return edges_decomposition == edges_self
+
+    def _tree_decomposition(self):
+
+        if self.max_order > 2:
+            raise NotImplemented
+
+        edges = []
+
+        for factor in self.factors:
+            if len(factor.members) == 2:
+                edges.append([factor, 0])
+
+        decomposition = []
+
+        while not self._check_coverage(decomposition):
+            current_decomposition = []
+            current_nodes = set()
+            edges = sorted(edges, key=lambda x: x[1])
+
+            for edge in edges:
+                members = edge[0].members
+                if not(members[0] in current_nodes and members[1] in current_nodes):
+                    current_decomposition.append(edge[0])
+                    current_nodes.add(members[0])
+                    current_nodes.add(members[1])
+                    edge[1] += 1
+
+            decomposition.append(GraphicalModel(current_decomposition))
+
+        return decomposition
 
     def _constructOpenGMModel(self):
         openGMModel = opengm.graphicalModel(self.cardinalities, operator="adder")
