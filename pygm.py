@@ -5,6 +5,12 @@ import opengm
 
 import dai
 
+from compiler.ast import flatten
+
+from collections import defaultdict
+
+import time
+
 
 class Factor(object):
 
@@ -12,16 +18,16 @@ class Factor(object):
         self.__n = len(members)
         self.__members = members
 
+        values = np.array(values).astype('longdouble')
+
         assert(isinstance(members, tuple))
         assert(isinstance(values, np.ndarray))
         assert(len(values.shape) == len(members))
 
-        values = values.astype('float32')
-
         if probability:
             illegal_values = values <= 0
             if np.any(illegal_values):
-                values[illegal_values] = np.finfo(np.float32).eps
+                values[illegal_values] = 10e-9
                 sys.stderr.write("Warning: illegal probability values(<= 0). These values replaced with machine precision value for float32\n")
             values = values / np.sum(values)
             self.__values = -np.log(values)
@@ -35,6 +41,10 @@ class Factor(object):
     @property
     def values(self):
         return self.__values
+
+    @property
+    def probs(self):
+        return np.exp(-self.__values)
 
     @property
     def order(self):
@@ -51,9 +61,36 @@ class Factor(object):
 
 class GraphicalModel(object):
 
-    def __init__(self, factors):
-        #assert(all([isinstance(factor, Factor) for factor in factors]))
+    def __init__(self, factors, make_tree_decomposition=False, normalize_unary_with_pairwise=(False, None)):
+
         self.__factors = factors
+
+        ############################ REMOVE
+        new_factors = []
+        if normalize_unary_with_pairwise[0]:
+            for factor in factors:
+                if len(factor.members) == 1:
+                    new_factors.append(factor)
+
+            margin_unary_factors = defaultdict(list)
+
+            for factor in factors:
+                if len(factor.members) == 2:
+                    members = factor.members
+                    prob_values = np.exp(-factor.values)
+                    n1 = np.sum(prob_values, axis=1)
+                    margin_unary_factors[members[0]].append(n1)
+                    #new_factors.append(Factor((members[0], ), n1, probability=True))
+                    n2 = np.sum(prob_values, axis=0)
+                    margin_unary_factors[members[1]].append(n2)
+                    #new_factors.append(Factor((members[1], ), n2, probability=True))
+                    new_values = (prob_values.T / n1.T).T / n2
+                    new_values = new_values / np.sum(new_values)
+
+                    new_factors.append(Factor(members, new_values, probability=True))
+
+            self.__factors = new_factors
+        ############################
 
         # compute variable cardinalities
         cardinalities_dict = {}
@@ -70,6 +107,25 @@ class GraphicalModel(object):
 
         for variable, cardinality in cardinalities_dict.items():
             self.__cardinalities[variable] = cardinality
+
+        if make_tree_decomposition:
+            self.tree_decomposition = self._tree_decomposition()
+
+    @staticmethod
+    def generateRandomGrid(n, k, make_tree_decomposition=True):
+        factor_list = []
+        for i in range(n):
+            for j in range(n):
+                members = (i + j * n, )
+                values = np.random.random(k)
+                f = Factor(members, values)
+                factor_list.append(f)
+            for j in range(1, n):
+                for members in [(i * n + (j - 1), i * n + j), ((j - 1) * n + i, j * n + i)]:
+                    values = np.random.random((k, k))
+                    f = Factor(members, values)
+                    factor_list.append(f)
+        return GraphicalModel(factor_list, make_tree_decomposition=make_tree_decomposition)
 
     @property
     def n_factors(self):
@@ -90,6 +146,45 @@ class GraphicalModel(object):
     @property
     def cardinalities(self):
         return self.__cardinalities
+
+    def _check_coverage(self, decomposition):
+
+        if self.max_order > 2:
+            raise NotImplemented
+
+        edges_decomposition = set(sum([[factor.members for factor in graph.factors] for graph in decomposition], []))
+        edges_self = set([factor.members for factor in self.factors if len(factor.members) == 2])
+        return edges_decomposition == edges_self
+
+    def _tree_decomposition(self):
+
+        if self.max_order > 2:
+            raise NotImplemented
+
+        edges = []
+
+        for factor in self.factors:
+            if len(factor.members) == 2:
+                edges.append([factor, 0])
+
+        decomposition = []
+
+        while not self._check_coverage(decomposition):
+            current_decomposition = []
+            current_nodes = set()
+            edges = sorted(edges, key=lambda x: x[1])
+
+            for edge in edges:
+                members = edge[0].members
+                if not(members[0] in current_nodes and members[1] in current_nodes):
+                    current_decomposition.append(edge[0])
+                    current_nodes.add(members[0])
+                    current_nodes.add(members[1])
+                    edge[1] += 1
+
+            decomposition.append(GraphicalModel(current_decomposition))
+
+        return decomposition
 
     def _constructOpenGMModel(self):
         openGMModel = opengm.graphicalModel(self.cardinalities, operator="adder")
@@ -125,6 +220,44 @@ class GraphicalModel(object):
         self.dai_factor_list = factor_list
         return dai_model
 
+    def _insertObservation(self, observation, partial):
+        if self.max_order > 2:
+            raise NotImplemented
+
+        observation_dict = dict([(i, single) for i, (take, single) in enumerate(zip(partial, observation)) if take])
+
+        new_factors = []
+        for factor in self.__factors:
+            members = factor.members
+            if len(members) == 1:
+                if members[0] in observation_dict:
+                    new_factor = Factor(members, [1.0], probability=True)
+                else:
+                    new_factor = factor
+            if len(members) == 2:
+                if members[0] in observation_dict and members[1] in observation_dict:
+                    new_factor = Factor(members, [[1.0]], probability=True)
+                elif members[0] in observation_dict:
+                    obs = observation_dict[members[0]]
+                    new_factor = Factor(members, [factor.probs[obs]], probability=True)
+                elif members[1] in observation_dict:
+                    obs = observation_dict[members[1]]
+                    new_factor = Factor(members, np.array([factor.probs[:, obs]]).T, probability=True)
+                else:
+                    new_factor = factor
+            new_factors.append(new_factor)
+        return GraphicalModel(new_factors)
+
+    def Energy(self, state):
+        state_dict = dict(enumerate(state))
+
+        energy = 0.0
+        for factor in self.factors:
+            assig = tuple([state_dict[member] for member in factor.members])
+            energy += factor.values[assig]
+
+        return energy
+
     def getMapState(self, alg, params):
         gm = self._constructOpenGMModel()
 
@@ -132,7 +265,15 @@ class GraphicalModel(object):
         inference_alg = getattr(opengm.inference, alg)(gm, parameter=opengm_params)
 
         inference_alg.infer()
-        return inference_alg.arg()
+        map_state = inference_alg.arg()
+
+        if alg == 'Mqpbo':
+            partial = inference_alg.partialOptimality()
+            new_fg = self._insertObservation(map_state, partial)
+            comp_map_state = new_fg.getMapState('TrwsExternal', {'steps': 10})
+            map_state[~partial] = comp_map_state[~partial]
+
+        return map_state
 
     def probInference(self, alg, params={}):
         gm = self._constructLibDAIModel()

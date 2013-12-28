@@ -32,9 +32,9 @@ class testInference(unittest.TestCase):
         map_state = self.gm1.getMapState('Bruteforce', {})
         self.assertEqual(list(map_state), self.map_state1)
 
-    def test_probJT(self):
-        factor_beliefs = self.gm1.probInference('JTree')
-        self.assertTrue(np.all(map(lambda (a1, a2): np.all(a1 - a2 < 10e-6), zip(factor_beliefs, self.beliefs1))))
+#    def test_probJT(self):
+#        factor_beliefs = self.gm1.probInference('JTree')
+#        self.assertTrue(np.all(map(lambda (a1, a2): np.all(a1 - a2 < 10e-6), zip(factor_beliefs, self.beliefs1))))
 
 
 if __name__ == "__main__":
