@@ -23,6 +23,7 @@ class Factor(object):
             if np.any(illegal_values):
                 values[illegal_values] = np.finfo(np.float32).eps
                 sys.stderr.write("Warning: illegal probability values(<= 0). These values replaced with machine precision value for float32\n")
+            values = values / np.sum(values)
             self.__values = -np.log(values)
         else:
             self.__values = values
