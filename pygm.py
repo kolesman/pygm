@@ -8,8 +8,13 @@ import dai
 from compiler.ast import flatten
 
 from collections import defaultdict
+from collections import Counter
 
 import time
+
+from copy import deepcopy
+
+import utils
 
 
 class Factor(object):
@@ -41,6 +46,10 @@ class Factor(object):
     @property
     def values(self):
         return self.__values
+
+    @values.setter
+    def values(self, value):
+        self.__values = value
 
     @property
     def probs(self):
@@ -109,7 +118,7 @@ class GraphicalModel(object):
             self.__cardinalities[variable] = cardinality
 
         if make_tree_decomposition:
-            self.tree_decomposition = self._tree_decomposition()
+            self.tree_decomposition = self._treeDecomposition()
 
     @staticmethod
     def generateRandomGrid(n, k, make_tree_decomposition=True):
@@ -147,44 +156,47 @@ class GraphicalModel(object):
     def cardinalities(self):
         return self.__cardinalities
 
-    def _check_coverage(self, decomposition):
+    def _treeDecomposition(self):
 
         if self.max_order > 2:
             raise NotImplemented
 
-        edges_decomposition = set(sum([[factor.members for factor in graph.factors] for graph in decomposition], []))
-        edges_self = set([factor.members for factor in self.factors if len(factor.members) == 2])
-        return edges_decomposition == edges_self
+        edges = [factor.members for factor in self.factors if len(factor.members) == 2]
 
-    def _tree_decomposition(self):
+        unary_factors = dict([(factor.members[0], factor) for factor in self.factors if len(factor.members) == 1])
+        pair_factors = dict([(factor.members, factor) for factor in self.factors if len(factor.members) == 2])
 
-        if self.max_order > 2:
-            raise NotImplemented
+        subtrees = utils.decomposeOnTrees(edges)
 
-        edges = []
+        edge_count = Counter([edge for tree in subtrees for edge in tree])
+        node_count = Counter([node for tree in subtrees for node in utils.listNodes(tree)])
 
-        for factor in self.factors:
-            if len(factor.members) == 2:
-                edges.append([factor, 0])
+        decompositions = []
 
-        decomposition = []
-
-        while not self._check_coverage(decomposition):
+        for tree in subtrees:
             current_decomposition = []
-            current_nodes = set()
-            edges = sorted(edges, key=lambda x: x[1])
+            current_unary = set()
+            for edge in tree:
+                pair_factor = deepcopy(pair_factors[edge])
+                pair_factor.values = pair_factor.values / edge_count[edge]
+                current_decomposition.append(pair_factor)
 
-            for edge in edges:
-                members = edge[0].members
-                if not(members[0] in current_nodes and members[1] in current_nodes):
-                    current_decomposition.append(edge[0])
-                    current_nodes.add(members[0])
-                    current_nodes.add(members[1])
-                    edge[1] += 1
+                if edge[0] not in current_unary:
+                    unary_factor = deepcopy(unary_factors[edge[0]])
+                    unary_factor.values = unary_factor.values / node_count[edge[0]]
+                    current_decomposition.append(unary_factor)
 
-            decomposition.append(GraphicalModel(current_decomposition))
+                if edge[1] not in current_unary:
+                    unary_factor = deepcopy(unary_factors[edge[1]])
+                    unary_factor.values = unary_factor.values / node_count[edge[1]]
+                    current_decomposition.append(unary_factor)
 
-        return decomposition
+                current_unary.add(edge[0])
+                current_unary.add(edge[1])
+
+            decompositions.append(GraphicalModel(current_decomposition))
+
+        return decompositions
 
     def _constructOpenGMModel(self):
         openGMModel = opengm.graphicalModel(self.cardinalities, operator="adder")
@@ -248,6 +260,10 @@ class GraphicalModel(object):
             new_factors.append(new_factor)
         return GraphicalModel(new_factors)
 
+    def variableList(self):
+        variable_set = set(list(sum([factor.members for factor in self.factors], ())))
+        return list(variable_set)
+
     def Energy(self, state):
         state_dict = dict(enumerate(state))
 
@@ -258,20 +274,26 @@ class GraphicalModel(object):
 
         return energy
 
-    def getMapState(self, alg, params):
+    def getMapState(self, alg, params, defaultvalue=0):
         gm = self._constructOpenGMModel()
 
         opengm_params = opengm.InfParam(**params)
         inference_alg = getattr(opengm.inference, alg)(gm, parameter=opengm_params)
 
         inference_alg.infer()
-        map_state = inference_alg.arg()
+        map_state = inference_alg.arg().astype('int')
 
         if alg == 'Mqpbo':
             partial = inference_alg.partialOptimality()
             new_fg = self._insertObservation(map_state, partial)
             comp_map_state = new_fg.getMapState('TrwsExternal', {'steps': 10})
             map_state[~partial] = comp_map_state[~partial]
+
+        variable_list = self.variableList()
+        variable_mask = np.zeros(self.n_vars).astype('bool')
+        variable_mask[variable_list] = True
+
+        map_state[~variable_mask] = defaultvalue
 
         return map_state
 
