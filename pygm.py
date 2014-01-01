@@ -119,6 +119,7 @@ class GraphicalModel(object):
 
         if make_tree_decomposition:
             self.tree_decomposition = self._treeDecomposition()
+            self.tree_decomposition_edge_mask = self._treeDecompositionEdgeMask()
 
     @staticmethod
     def generateRandomGrid(n, k, make_tree_decomposition=True):
@@ -197,6 +198,20 @@ class GraphicalModel(object):
             decompositions.append(GraphicalModel(current_decomposition))
 
         return decompositions
+
+    def _treeDecompositionEdgeMask(self):
+
+        decomposition_edge_sets = [set([factor.members for factor in tree.factors if len(factor.members) == 2])
+                                   for tree in self.tree_decomposition]
+
+        edge_mask = {}
+
+        edges = [factor.members for factor in self.factors if len(factor.members) == 2]
+
+        for i, j in edges:
+            edge_mask[(i, j)] = np.array([(i, j) in s for s in decomposition_edge_sets]).astype('bool')
+
+        return edge_mask
 
     def _constructOpenGMModel(self):
         openGMModel = opengm.graphicalModel(self.cardinalities, operator="adder")
