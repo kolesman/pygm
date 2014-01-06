@@ -5,8 +5,15 @@ import time
 
 from collections import Counter
 
+from itertools import product
 
-def subgradient(g, alpha):
+
+MAXPRIMALS = 1
+
+
+def computeSubgradient(g):
+
+    subgradient = []
 
     subtrees = g.tree_decomposition
 
@@ -14,8 +21,9 @@ def subgradient(g, alpha):
 
     energy = sum([subtree.Energy(solution) for subtree, solution in zip(subtrees, tree_solutions)])
 
-    primal_solution = [Counter(preds).most_common()[0][0] for preds in tree_solutions.T]
-    primal_energy = g.Energy(primal_solution)
+    #primal_solution = [Counter(preds).most_common()[0][0] for preds in tree_solutions.T]
+    #primal_energy = g.Energy(primal_solution)
+    primal_energy = np.max([g.Energy(primal_solution) for primal_solution in primalSolutions(tree_solutions)])
 
     for subtree, solution in zip(subtrees, tree_solutions):
 
@@ -25,7 +33,8 @@ def subgradient(g, alpha):
                 i = factor.members[0]
                 for u in range(len(factor.values)):
                     shift = (solution[i] == u) - np.average(tree_solutions[:, i] == u)
-                    factor.values[u] += alpha * shift
+                    subgradient.append(shift)
+                    #factor.values[u] += alpha * shift
 
             if len(factor.members) == 2:
                 i, j = factor.members
@@ -36,25 +45,80 @@ def subgradient(g, alpha):
                         for v in range(v_len):
                             shift = ((solution[i] == u) * (solution[j] == v)) -\
                                 np.average((tree_solutions[:, i] == u)[edge_mask] * (tree_solutions[:, j] == v)[edge_mask])
-                            factor.values[u][v] += alpha * shift
+                            subgradient.append(shift)
+                            #factor.values[u][v] += alpha * shift
 
-    return primal_energy, energy
+    return np.array(subgradient), energy, primal_energy
 
 
-def sgd_stepfunction(g, f, eps=1.0e-6):
+def update(g, subgradient, alpha):
 
-    primal_energy, energy = subgradient(g, f(0))
+    subtrees = g.tree_decomposition
+    iii = 0
 
-    i = 1
-    while True:
-        primal_energy, energy_new = subgradient(g, f(i))
-        print(primal_energy, energy_new, f(i))
+    for subtree in subtrees:
 
-        if abs(energy - energy_new) < eps:
-            break
+        for factor in subtree.factors:
 
+            if len(factor.members) == 1:
+                i = factor.members[0]
+                for u in range(len(factor.values)):
+                    factor.values[u] += alpha * subgradient[iii]
+                    iii += 1
+
+            if len(factor.members) == 2:
+                i, j = factor.members
+                edge_mask = g.tree_decomposition_edge_mask[(i, j)]
+                if sum(edge_mask) > 1:
+                    u_len, v_len = factor.values.shape
+                    for u in range(u_len):
+                        for v in range(v_len):
+                            factor.values[u][v] += alpha * subgradient[iii]
+                            iii += 1
+
+    return 0
+
+
+def primalSolutions(solutions):
+    primals = product(*[np.unique(solution) for solution in solutions.T])
+    return [primals.next() for dummy in range(MAXPRIMALS)]
+
+
+def sgd_expstep(g, maxiter=300, verbose=False, log=None, optimal_parameters=None):
+
+    subgradient, energy, primal_energy = computeSubgradient(g)
+
+    best_primal = primal_energy
+    best_dual = energy
+
+    parameters = np.zeros(len(subgradient))
+
+    i = 0
+    while i < maxiter:
+
+        step = 1.0 / ((1 + i ** 0.5) * np.linalg.norm(subgradient))
         i += 1
 
-        energy = energy_new
+        if log:
+            sn = np.linalg(subgradient)
+            log_line = [best_dual, energy, sn, step]
 
-    return energy_new
+            if optimal_parameters:
+                optimal_step = np.dot(subgradient, optimal_parameters) / sn ** 2
+                log_line.append(optimal_step)
+
+            log.write("\t".join(["%.5f" % val for val in log_line]) + "\n")
+
+        update(g, subgradient, step)
+
+        parameters += step * subgradient
+
+        subgradient, energy, primal_energy = computeSubgradient(g)
+
+        if verbose:
+            print(best_primal, best_dual, energy, step)
+
+        best_dual = max(best_dual, energy)
+        best_primal = min(best_primal, primal_energy)
+
+    return parameters

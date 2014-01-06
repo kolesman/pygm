@@ -74,33 +74,6 @@ class GraphicalModel(object):
 
         self.__factors = factors
 
-        ############################ REMOVE
-        new_factors = []
-        if normalize_unary_with_pairwise[0]:
-            for factor in factors:
-                if len(factor.members) == 1:
-                    new_factors.append(factor)
-
-            margin_unary_factors = defaultdict(list)
-
-            for factor in factors:
-                if len(factor.members) == 2:
-                    members = factor.members
-                    prob_values = np.exp(-factor.values)
-                    n1 = np.sum(prob_values, axis=1)
-                    margin_unary_factors[members[0]].append(n1)
-                    #new_factors.append(Factor((members[0], ), n1, probability=True))
-                    n2 = np.sum(prob_values, axis=0)
-                    margin_unary_factors[members[1]].append(n2)
-                    #new_factors.append(Factor((members[1], ), n2, probability=True))
-                    new_values = (prob_values.T / n1.T).T / n2
-                    new_values = new_values / np.sum(new_values)
-
-                    new_factors.append(Factor(members, new_values, probability=True))
-
-            self.__factors = new_factors
-        ############################
-
         # compute variable cardinalities
         cardinalities_dict = {}
         for factor in self.__factors:
