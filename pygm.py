@@ -95,17 +95,18 @@ class GraphicalModel(object):
             self.tree_decomposition_edge_mask = self._treeDecompositionEdgeMask()
 
     @staticmethod
-    def generateRandomGrid(n, k, make_tree_decomposition=True):
+    def generateRandomGrid(n, k, sigma, d_max, make_tree_decomposition=True):
         factor_list = []
         for i in range(n):
             for j in range(n):
                 members = (i + j * n, )
-                values = np.random.random(k)
+                values = np.random.normal(0, sigma, k)
                 f = Factor(members, values)
                 factor_list.append(f)
             for j in range(1, n):
                 for members in [(i * n + (j - 1), i * n + j), ((j - 1) * n + i, j * n + i)]:
-                    values = np.random.random((k, k))
+                    values = d_max * np.abs(np.random.normal(0, sigma, (k, k)))
+                    values[np.diag_indices(k)] = 0.0
                     f = Factor(members, values)
                     factor_list.append(f)
         return GraphicalModel(factor_list, make_tree_decomposition=make_tree_decomposition)

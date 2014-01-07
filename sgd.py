@@ -84,47 +84,86 @@ def primalSolutions(solutions):
     return [primals.next() for dummy in range(MAXPRIMALS)]
 
 
-def sgd_expstep(g, maxiter=300, verbose=False, make_log=None, optimal_parameters=None, godmode=None):
+def sgd_expstep(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_parameters=None):
+
+    best_primal = 2 ** 32
+    best_dual = -2 ** 32
+    energy_prev = -2 ** 32
 
     subgradient, energy, primal_energy = computeSubgradient(g)
-
-    best_primal = primal_energy
-    best_dual = energy
-
     parameters = np.zeros(len(subgradient))
+
+    gn = np.sum([tree.n_factors for tree in g.tree_decomposition])
+
+    scope = {}
+    scope['energy_level'] = best_dual
+    scope['s'] = 0
+    if step_rule[0] == 'step_adaptive':
+        scope['s'] = step_rule[1]['s0']
 
     i = 0
     log = []
+
     while i < maxiter:
+
+        subgradient, energy, primal_energy = computeSubgradient(g)
+
+        best_dual = max(best_dual, energy)
+        best_primal = min(best_primal, primal_energy)
 
         sn = np.linalg.norm(subgradient)
 
-        step = 1.0 / ((1 + i ** 0.5) * sn)
+        def step_constant(r0=0.01):
+            return r0
+
+        def step_array(a=np.ones(maxiter)):
+            return a[i]
+
+        def step_power(r0=1.0, alpha=0.5):
+            return r0 / ((1 + i ** alpha))
+
+        def step_power_norm(r0=1.0, alpha=0.5):
+            return r0 / ((1 + i ** alpha) * np.sqrt(gn))
+
+        def step_god(optimal_solution):
+            return 0.5 * np.dot(subgradient, optimal_solution - parameters) / sn ** 2
+
+        def step_adaptive(gamma=2.0, sign=0.1, rho0=1.5, rho1=0.9, s0=0.01):
+
+            approx = scope['energy_level'] + scope['s']
+
+            print(energy, approx)
+            if energy > approx:
+                scope['s'] *= rho0
+                scope['energy_level'] = best_dual
+            else:
+                scope['s'] *= rho1
+
+            approx = scope['energy_level'] + scope['s']
+
+            approx = -150
+            return gamma * ((approx - energy) / gn)
+            #return gamma * ((approx - energy) / sn ** 2)
+
+        step = eval(step_rule[0])(**step_rule[1])
+
+        if verbose:
+            print(best_primal, best_dual, energy, step)
+
+        #energy_prev = energy
+        update(g, subgradient, step)
+        parameters += step * subgradient
+
         i += 1
 
-        if not godmode is None:
-            step = np.dot(subgradient, godmode - parameters) / sn ** 2
-
         if make_log:
-            log_line = [best_dual, energy, sn, step]
+            log_line = [best_primal, best_dual, energy, sn, step]
 
             if not optimal_parameters is None:
                 optimal_step = np.dot(subgradient, optimal_parameters) / sn ** 2
                 log_line.append(optimal_step)
 
             log.append(log_line)
-
-        update(g, subgradient, step)
-
-        parameters += step * subgradient
-
-        subgradient, energy, primal_energy = computeSubgradient(g)
-
-        if verbose:
-            print(best_primal, best_dual, energy, step)
-
-        best_dual = max(best_dual, energy)
-        best_primal = min(best_primal, primal_energy)
 
     if make_log:
         return parameters, np.array(log)
