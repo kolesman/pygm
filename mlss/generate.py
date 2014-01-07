@@ -18,15 +18,19 @@ def main(n, m, k, file_name):
     gms = [pygm.GraphicalModel.generateRandomGrid(m, k, make_tree_decomposition=True) for i in range(n)]
 
     pool = multiprocessing.Pool(n_cpus)
+    lazy_solutions = []
     for gm in gms:
-        pool.apply_async(sgd.sgd_expstep, [gm], {'verbose': True})
-        #optimal_parameters = sgd.sgd_expstep(gm, verbose=True)
-        #gm.optimal_parameters = optimal_parameters
+        res = pool.apply_async(sgd.sgd_expstep, [gm], {'verbose': True})
+        lazy_solutions.append(res)
 
     pool.close()
-    pool.join()
 
-    cPickle.dump(gms, open(file_name, "w"))
+    solutions = [solution.get() for solution in lazy_solutions]
+
+    for gm, solution in zip(gms, solutions):
+        gm.optimal_parameters = solution
+
+    cPickle.dump(gms, open(file_name, "w"), protocol=2)
 
 
 if __name__ == "__main__":

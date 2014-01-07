@@ -84,7 +84,7 @@ def primalSolutions(solutions):
     return [primals.next() for dummy in range(MAXPRIMALS)]
 
 
-def sgd_expstep(g, maxiter=300, verbose=False, log=None, optimal_parameters=None):
+def sgd_expstep(g, maxiter=300, verbose=False, make_log=None, optimal_parameters=None, godmode=None):
 
     subgradient, energy, primal_energy = computeSubgradient(g)
 
@@ -94,20 +94,25 @@ def sgd_expstep(g, maxiter=300, verbose=False, log=None, optimal_parameters=None
     parameters = np.zeros(len(subgradient))
 
     i = 0
+    log = []
     while i < maxiter:
 
-        step = 1.0 / ((1 + i ** 0.5) * np.linalg.norm(subgradient))
+        sn = np.linalg.norm(subgradient)
+
+        step = 1.0 / ((1 + i ** 0.5) * sn)
         i += 1
 
-        if log:
-            sn = np.linalg(subgradient)
+        if not godmode is None:
+            step = np.dot(subgradient, godmode - parameters) / sn ** 2
+
+        if make_log:
             log_line = [best_dual, energy, sn, step]
 
-            if optimal_parameters:
+            if not optimal_parameters is None:
                 optimal_step = np.dot(subgradient, optimal_parameters) / sn ** 2
                 log_line.append(optimal_step)
 
-            log.write("\t".join(["%.5f" % val for val in log_line]) + "\n")
+            log.append(log_line)
 
         update(g, subgradient, step)
 
@@ -120,5 +125,8 @@ def sgd_expstep(g, maxiter=300, verbose=False, log=None, optimal_parameters=None
 
         best_dual = max(best_dual, energy)
         best_primal = min(best_primal, primal_energy)
+
+    if make_log:
+        return parameters, np.array(log)
 
     return parameters
