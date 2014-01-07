@@ -100,6 +100,7 @@ class GraphicalModel(object):
         for i in range(n):
             for j in range(n):
                 members = (i + j * n, )
+                #values = np.sort(np.random.normal(0, sigma, k))
                 values = np.random.normal(0, sigma, k)
                 f = Factor(members, values)
                 factor_list.append(f)

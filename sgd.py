@@ -84,22 +84,23 @@ def primalSolutions(solutions):
     return [primals.next() for dummy in range(MAXPRIMALS)]
 
 
-def sgd_expstep(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_parameters=None):
+def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_parameters=None):
 
     best_primal = 2 ** 32
     best_dual = -2 ** 32
-    energy_prev = -2 ** 32
 
     subgradient, energy, primal_energy = computeSubgradient(g)
     parameters = np.zeros(len(subgradient))
+    #energy_prev = energy
 
-    gn = np.sum([tree.n_factors for tree in g.tree_decomposition])
+    gn2 = np.sum([tree.n_factors for tree in g.tree_decomposition])
 
     scope = {}
-    scope['energy_level'] = best_dual
-    scope['s'] = 0
+
     if step_rule[0] == 'step_adaptive':
-        scope['s'] = step_rule[1]['s0']
+        scope['delta'] = step_rule[1]['delta']
+        scope['energy_rec'] = energy
+        scope['sigma'] = 0
 
     i = 0
     log = []
@@ -113,6 +114,9 @@ def sgd_expstep(g, maxiter=300, step_rule=None, verbose=False, make_log=None, op
 
         sn = np.linalg.norm(subgradient)
 
+        if sn < 1.0e-9:
+            break
+
         def step_constant(r0=0.01):
             return r0
 
@@ -123,27 +127,28 @@ def sgd_expstep(g, maxiter=300, step_rule=None, verbose=False, make_log=None, op
             return r0 / ((1 + i ** alpha))
 
         def step_power_norm(r0=1.0, alpha=0.5):
-            return r0 / ((1 + i ** alpha) * np.sqrt(gn))
+            return r0 / ((1 + i ** alpha) * np.sqrt(gn2))
 
         def step_god(optimal_solution):
-            return 0.5 * np.dot(subgradient, optimal_solution - parameters) / sn ** 2
+            return np.dot(subgradient, optimal_solution - parameters) / sn ** 2
 
-        def step_adaptive(gamma=2.0, sign=0.1, rho0=1.5, rho1=0.9, s0=0.01):
+        def step_adaptive(B=1.0, gamma=1.0, **kwarg):
 
-            approx = scope['energy_level'] + scope['s']
+            update = 0
+            if energy > scope['energy_rec'] + scope['delta'] / 2:
+                scope['sigma'] = 0
+                update = 1
+            elif scope['sigma'] > B / np.sqrt(i + 1):
+                scope['delta'] = scope['delta'] / 2
+                scope['sigma'] = 0
+                update = 1
 
-            print(energy, approx)
-            if energy > approx:
-                scope['s'] *= rho0
-                scope['energy_level'] = best_dual
-            else:
-                scope['s'] *= rho1
+            if update:
+                scope['energy_rec'] = best_dual
 
-            approx = scope['energy_level'] + scope['s']
+            approx = scope['energy_rec'] + scope['delta']
 
-            approx = -150
-            return gamma * ((approx - energy) / gn)
-            #return gamma * ((approx - energy) / sn ** 2)
+            return gamma * (approx - energy) / sn ** 2
 
         step = eval(step_rule[0])(**step_rule[1])
 
@@ -153,6 +158,9 @@ def sgd_expstep(g, maxiter=300, step_rule=None, verbose=False, make_log=None, op
         #energy_prev = energy
         update(g, subgradient, step)
         parameters += step * subgradient
+
+        if 'sigma' in scope:
+            scope['sigma'] += step * sn
 
         i += 1
 
