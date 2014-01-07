@@ -20,7 +20,8 @@ def main(n, m, k, file_name):
     pool = multiprocessing.Pool(n_cpus)
     lazy_solutions = []
     for gm in gms:
-        res = pool.apply_async(sgd.sgd_expstep, [gm], {'verbose': True})
+        res = pool.apply_async(sgd.sgd_expstep, [gm], {'verbose': False})
+        gm.tree_decomposition = gm._treeDecomposition()
         lazy_solutions.append(res)
 
     pool.close()
