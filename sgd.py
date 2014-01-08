@@ -102,6 +102,10 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_pa
         scope['energy_rec'] = energy
         scope['sigma'] = 0
 
+    optimal_solution = None
+    if step_rule[0] == 'step_god':
+        optimal_solution = g.optimal_parameters
+
     i = 0
     log = []
 
@@ -129,7 +133,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_pa
         def step_power_norm(r0=1.0, alpha=0.5):
             return r0 / ((1 + i ** alpha) * np.sqrt(gn2))
 
-        def step_god(optimal_solution):
+        def step_god():
             return np.dot(subgradient, optimal_solution - parameters) / sn ** 2
 
         def step_adaptive(B=1.0, gamma=1.0, **kwarg):
