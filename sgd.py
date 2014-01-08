@@ -84,7 +84,7 @@ def primalSolutions(solutions):
     return [primals.next() for dummy in range(MAXPRIMALS)]
 
 
-def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_parameters=None):
+def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optimal_solution=False):
 
     best_primal = 2 ** 32
     best_dual = -2 ** 32
@@ -103,7 +103,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_pa
         scope['sigma'] = 0
 
     optimal_solution = None
-    if step_rule[0] == 'step_god':
+    if step_rule[0] == 'step_god' or use_optimal_solution:
         optimal_solution = g.optimal_parameters
 
     i = 0
@@ -159,10 +159,6 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_pa
         if verbose:
             print(best_primal, best_dual, energy, step)
 
-        #energy_prev = energy
-        update(g, subgradient, step)
-        parameters += step * subgradient
-
         if 'sigma' in scope:
             scope['sigma'] += step * sn
 
@@ -171,11 +167,14 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, optimal_pa
         if make_log:
             log_line = [best_primal, best_dual, energy, sn, step]
 
-            if not optimal_parameters is None:
-                optimal_step = np.dot(subgradient, optimal_parameters) / sn ** 2
+            if use_optimal_solution:
+                optimal_step = np.dot(subgradient, optimal_solution - parameters) / sn ** 2
                 log_line.append(optimal_step)
 
             log.append(log_line)
+
+        update(g, subgradient, step)
+        parameters += step * subgradient
 
     if make_log:
         return parameters, np.array(log)
