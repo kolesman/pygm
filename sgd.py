@@ -7,6 +7,8 @@ from collections import Counter
 
 from itertools import product
 
+import cPickle
+
 
 MAXPRIMALS = 1
 
@@ -101,6 +103,9 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
         scope['delta'] = step_rule[1]['delta']
         scope['energy_rec'] = energy
         scope['sigma'] = 0
+
+    if step_rule[0] == 'step_array':
+        step_rule[1]['a'] = cPickle.load(open(step_rule[1]['a']))
 
     optimal_solution = None
     if step_rule[0] == 'step_god' or use_optimal_solution:
