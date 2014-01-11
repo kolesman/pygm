@@ -90,6 +90,8 @@ class GraphicalModel(object):
         for variable, cardinality in cardinalities_dict.items():
             self.__cardinalities[variable] = cardinality
 
+        self.map_members_index = dict([(factor.members, i) for i, factor in enumerate(self.__factors)])
+
         if make_tree_decomposition:
             self.tree_decomposition = self._treeDecomposition()
             self.tree_decomposition_edge_mask = self._treeDecompositionEdgeMask()
@@ -111,6 +113,49 @@ class GraphicalModel(object):
                     f = Factor(members, values)
                     factor_list.append(f)
         return GraphicalModel(factor_list, make_tree_decomposition=make_tree_decomposition)
+
+    @staticmethod
+    def loadFromUAI(file_name):
+        f = open(file_name)
+
+        assert(f.next().strip() == "MARKOV")
+
+        n = int(f.next())
+
+        cardinalities = map(int, f.next().strip().split(" "))
+
+        assert(len(cardinalities) == n)
+
+        k = int(f.next().strip())
+
+        members_list = []
+        for i in range(k):
+            l = map(int, f.next().strip().split(" "))
+            order, members = l[0], l[1:]
+            assert(order == len(members))
+            members_list.append(tuple(members))
+
+        values_list = []
+        f.next()
+        for i, members in enumerate(members_list):
+
+            shape = tuple([cardinalities[member] for member in members])
+            count = int(f.next())
+            assert(np.prod(shape) == count)
+
+            values = []
+            while True:
+                l = f.next().strip()
+                if l == "":
+                    break
+                values += map(float, l.split(" "))
+
+            values = np.array(values).reshape(shape)
+            values_list.append(values)
+
+        factors = [Factor(members, values) for members, values in zip(members_list, values_list)]
+
+        return GraphicalModel(factors, make_tree_decomposition=True)
 
     @property
     def n_factors(self):

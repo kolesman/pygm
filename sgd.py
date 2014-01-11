@@ -4,10 +4,13 @@ import sys
 import time
 
 from collections import Counter
+from collections import defaultdict
 
 from itertools import product
 
 import cPickle
+
+from compiler.ast import flatten
 
 
 MAXPRIMALS = 1
@@ -15,68 +18,51 @@ MAXPRIMALS = 1
 
 def computeSubgradient(g):
 
-    subgradient = []
-
     subtrees = g.tree_decomposition
 
     tree_solutions = np.array([subtree.getMapState('DynamicProgramming', {}) for subtree in subtrees])
 
     energy = sum([subtree.Energy(solution) for subtree, solution in zip(subtrees, tree_solutions)])
 
-    #primal_solution = [Counter(preds).most_common()[0][0] for preds in tree_solutions.T]
-    #primal_energy = g.Energy(primal_solution)
-    primal_energy = np.max([g.Energy(primal_solution) for primal_solution in primalSolutions(tree_solutions)])
+    primal_solution = [Counter(preds).most_common()[0][0] for preds in tree_solutions.T]
+    primal_energy = g.Energy(primal_solution)
 
-    for subtree, solution in zip(subtrees, tree_solutions):
+    update = defaultdict(int)
+    n_trees = len(subtrees)
 
-        for factor in subtree.factors:
+    for i, solution in enumerate(tree_solutions):
+        for j, label in enumerate(solution):
+            update[(i, subtrees[i].map_members_index[(j, )], (label, ))] += 1.0
 
-            if len(factor.members) == 1:
-                i = factor.members[0]
-                for u in range(len(factor.values)):
-                    shift = (solution[i] == u) - np.average(tree_solutions[:, i] == u)
-                    subgradient.append(shift)
-                    #factor.values[u] += alpha * shift
+            for t in range(n_trees):
+                update[(t, subtrees[t].map_members_index[(j, )], (label, ))] -= 1.0 / n_trees
 
-            if len(factor.members) == 2:
-                i, j = factor.members
-                edge_mask = g.tree_decomposition_edge_mask[(i, j)]
-                if sum(edge_mask) > 1:
-                    u_len, v_len = factor.values.shape
-                    for u in range(u_len):
-                        for v in range(v_len):
-                            shift = ((solution[i] == u) * (solution[j] == v)) -\
-                                np.average((tree_solutions[:, i] == u)[edge_mask] * (tree_solutions[:, j] == v)[edge_mask])
-                            subgradient.append(shift)
-                            #factor.values[u][v] += alpha * shift
+    edges = set([factor.members for factor in g.factors if len(factor.members) == 2])
 
-    return np.array(subgradient), energy, primal_energy
+    for i, solution in enumerate(tree_solutions):
+        for u, label0 in enumerate(solution):
+            for v, label1 in enumerate(solution):
+                if (u, v) in edges:
+                    n_dual = np.sum(g.tree_decomposition_edge_mask[(u, v)])
+                    if g.tree_decomposition_edge_mask[(u, v)][i]:
+                        update[(i, subtrees[i].map_members_index[(u, v)], (label0, label1))] += 1.0
+
+                        for t in range(n_trees):
+                            if g.tree_decomposition_edge_mask[(u, v)][t]:
+                                update[(t, subtrees[t].map_members_index[(u, v)], (label0, label1))] -= 1.0 / n_dual
+
+    update = dict([(key, value) for key, value in update.items() if abs(value) > 1.0e-9])
+
+    return update, energy, primal_energy
 
 
-def update(g, subgradient, alpha):
+def updateParams(g, update, alpha):
 
-    subtrees = g.tree_decomposition
-    iii = 0
-
-    for subtree in subtrees:
-
-        for factor in subtree.factors:
-
-            if len(factor.members) == 1:
-                i = factor.members[0]
-                for u in range(len(factor.values)):
-                    factor.values[u] += alpha * subgradient[iii]
-                    iii += 1
-
-            if len(factor.members) == 2:
-                i, j = factor.members
-                edge_mask = g.tree_decomposition_edge_mask[(i, j)]
-                if sum(edge_mask) > 1:
-                    u_len, v_len = factor.values.shape
-                    for u in range(u_len):
-                        for v in range(v_len):
-                            factor.values[u][v] += alpha * subgradient[iii]
-                            iii += 1
+    for key, value in update.items():
+        i = key[0]
+        f = key[1]
+        a = key[2]
+        g.tree_decomposition[i].factors[f].values[a] += alpha * value
 
     return 0
 
@@ -91,8 +77,9 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
     best_primal = 2 ** 32
     best_dual = -2 ** 32
 
-    subgradient, energy, primal_energy = computeSubgradient(g)
-    parameters = np.zeros(len(subgradient))
+    update, energy, primal_energy = computeSubgradient(g)
+
+    #parameters = np.zeros(len(subgradient))
     #energy_prev = energy
 
     gn2 = np.sum([tree.n_factors for tree in g.tree_decomposition])
@@ -116,12 +103,12 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
 
     while i < maxiter:
 
-        subgradient, energy, primal_energy = computeSubgradient(g)
+        update, energy, primal_energy = computeSubgradient(g)
 
         best_dual = max(best_dual, energy)
         best_primal = min(best_primal, primal_energy)
 
-        sn = np.linalg.norm(subgradient)
+        sn = np.linalg.norm(update.values())
 
         if sn < 1.0e-9:
             break
@@ -139,7 +126,9 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
             return r0 / ((1 + i ** alpha) * np.sqrt(gn2))
 
         def step_god():
-            return np.dot(subgradient, optimal_solution - parameters) / sn ** 2
+            raise NotImplemented
+            return 0
+            #return np.dot(subgradient, optimal_solution - parameters) / sn ** 2
 
         def step_adaptive(B=1.0, gamma=1.0, **kwarg):
 
@@ -173,15 +162,17 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
             log_line = [best_primal, best_dual, energy, sn, step]
 
             if use_optimal_solution:
-                optimal_step = np.dot(subgradient, optimal_solution - parameters) / sn ** 2
-                log_line.append(optimal_step)
+                raise NotImplemented
+                #optimal_step = np.dot(update, optimal_solution - parameters) / sn ** 2
+                #log_line.append(optimal_step)
 
             log.append(log_line)
 
-        update(g, subgradient, step)
-        parameters += step * subgradient
+        updateParams(g, update, step)
+        #parameters += step * subgradient
 
     if make_log:
-        return parameters, np.array(log)
+        raise NotImplemented
+        return 0, np.array(log)
 
-    return parameters
+    return 0
