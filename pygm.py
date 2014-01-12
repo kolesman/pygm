@@ -177,6 +177,14 @@ class GraphicalModel(object):
     def cardinalities(self):
         return self.__cardinalities
 
+    @property
+    def average_element(self):
+        return np.average(np.hstack([np.abs(factor.values).ravel() for factor in self.factors]))
+
+    @property
+    def n_values(self):
+        return np.sum([np.prod(factor.values.shape) for factor in self.factors])
+
     def _treeDecomposition(self):
 
         if self.max_order > 2:
@@ -360,6 +368,10 @@ class GraphicalModel(object):
             factor_values.append(values.reshape(shape))
 
         return factor_values
+
+    def __call__(self, *args):
+        value = getattr(self, args[0])(*args[1:])
+        return value
 
 
 def main():

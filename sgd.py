@@ -12,15 +12,29 @@ import cPickle
 
 from compiler.ast import flatten
 
+import utils
+
+import multiprocessing
+
 
 MAXPRIMALS = 1
+CPUS = 4
 
 
 def computeSubgradient(g):
 
     subtrees = g.tree_decomposition
 
-    tree_solutions = np.array([subtree.getMapState('DynamicProgramming', {}) for subtree in subtrees])
+    lazy_solutions = []
+    pool = multiprocessing.Pool(CPUS)
+    for subtree in subtrees:
+        lazy_solution = pool.apply_async(subtree, ['getMapState', 'DynamicProgramming', {}])
+        lazy_solutions.append(lazy_solution)
+
+    pool.close()
+    pool.join()
+
+    tree_solutions = np.array([lazy_solution.get() for lazy_solution in lazy_solutions])
 
     energy = sum([subtree.Energy(solution) for subtree, solution in zip(subtrees, tree_solutions)])
 
@@ -79,17 +93,20 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
 
     update, energy, primal_energy = computeSubgradient(g)
 
-    #parameters = np.zeros(len(subgradient))
-    #energy_prev = energy
+    parameters = dict()
 
     gn2 = np.sum([tree.n_factors for tree in g.tree_decomposition])
 
     scope = {}
 
     if step_rule[0] == 'step_adaptive':
-        scope['delta'] = step_rule[1]['delta']
+        scope['delta'] = primal_energy - energy
         scope['energy_rec'] = energy
+        scope['B'] = 0.1 * g.average_element * g.n_values
+        scope['without_imp'] = 0
+        scope['max_without_imp'] = 10
         scope['sigma'] = 0
+        print(scope)
 
     if step_rule[0] == 'step_array':
         step_rule[1]['a'] = cPickle.load(open(step_rule[1]['a']))
@@ -126,19 +143,20 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
             return r0 / ((1 + i ** alpha) * np.sqrt(gn2))
 
         def step_god():
-            raise NotImplemented
-            return 0
-            #return np.dot(subgradient, optimal_solution - parameters) / sn ** 2
+            return utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
 
-        def step_adaptive(B=1.0, gamma=1.0, **kwarg):
+        def step_adaptive(gamma=1.0, **kwarg):
 
             update = 0
-            if energy > scope['energy_rec'] + scope['delta'] / 2:
+            if energy > scope['energy_rec'] + scope['delta'] / 5:
                 scope['sigma'] = 0
+                scope['without_imp'] = 0
                 update = 1
-            elif scope['sigma'] > B / np.sqrt(i + 1):
-                scope['delta'] = scope['delta'] / 2
+            #elif scope['sigma'] > scope['B'] * ((primal_energy - energy) / first_gap):
+            elif scope['without_imp'] > scope['max_without_imp']:
+                scope['delta'] = scope['delta'] * 0.75
                 scope['sigma'] = 0
+                scope['without_imp'] = 0
                 update = 1
 
             if update:
@@ -155,6 +173,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
 
         if 'sigma' in scope:
             scope['sigma'] += step * sn
+            scope['without_imp'] += 1
 
         i += 1
 
@@ -162,17 +181,15 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
             log_line = [best_primal, best_dual, energy, sn, step]
 
             if use_optimal_solution:
-                raise NotImplemented
-                #optimal_step = np.dot(update, optimal_solution - parameters) / sn ** 2
-                #log_line.append(optimal_step)
+                optimal_step = utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
+                log_line.append(optimal_step)
 
             log.append(log_line)
 
         updateParams(g, update, step)
-        #parameters += step * subgradient
+        parameters = utils.dictSum(parameters, utils.dictMult(update, step))
 
     if make_log:
-        raise NotImplemented
-        return 0, np.array(log)
+        return parameters, np.array(log)
 
-    return 0
+    return parameters
