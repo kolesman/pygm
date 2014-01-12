@@ -12,6 +12,7 @@ from optparse import OptionParser
 
 
 n_cpus = multiprocessing.cpu_count()
+print(n_cpus)
 
 
 def main(n, m, k, sigma, dmax, maxiter, file_name):

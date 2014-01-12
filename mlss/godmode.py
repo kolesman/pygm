@@ -8,17 +8,26 @@ import sgd
 
 import numpy as np
 
+from copy import deepcopy
 
-n_cpus = multiprocessing.cpu_count()
 
+def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel=8):
 
-def main(gms, output):
-
-    pool = multiprocessing.Pool(n_cpus)
+    pool = multiprocessing.Pool(parallel)
     lazy_solutions = []
-    for gm in gms:
-        res = pool.apply_async(sgd.sgd_expstep, [gm], {'make_log': True, 'godmode': gm.optimal_parameters, 'optimal_parameters': gm.optimal_parameters})
-        gm.tree_decomposition = gm._treeDecomposition()
+
+    if cut:
+        [i, j] = map(int, cut.split(':'))
+
+    gms = cPickle.load(open(gms_file))
+
+    for gm in gms[i:j]:
+        gm_copy = deepcopy(gm)
+        res = pool.apply_async(sgd.sgd, [gm_copy],
+                               {'maxiter': maxiter,
+                                'make_log': True,
+                                'step_rule': (step_rule, eval(step_parameters)),
+                                'use_optimal_solution': True})
         lazy_solutions.append(res)
 
     pool.close()
@@ -32,11 +41,15 @@ if __name__ == "__main__":
 
     parser = OptionParser()
     parser.add_option("-g",  dest="gms_file", help="Dump with graphical models")
-    parser.add_option("-o",  dest="output_file", help="Where to output log")
+    parser.add_option("-i",  dest="maxiter", type='int', help="Max number of iterations")
+    parser.add_option("--parallel",  dest="parallel", default=8, type='int', help="Threads")
+    parser.add_option("-s",  dest="step_rule", help="Step rule")
+    parser.add_option("-p",  dest="step_parameters", help="Step parameters")
+    parser.add_option("-c",  dest="cut", default="", help="Slice gm list from i to j. Example: -c 10:20")
+    parser.add_option("-o",  dest="output_file", help="Optimization log output file")
 
     (options, args) = parser.parse_args()
 
-    gms = cPickle.load(open(options.gms_file))
     output = open(options.output_file, "w")
 
-    main(gms, output)
+    main(options.gms_file, options.maxiter, options.step_rule, options.step_parameters, options.cut, output, options.parallel)
