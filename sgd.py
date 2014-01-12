@@ -18,7 +18,7 @@ import multiprocessing
 
 
 MAXPRIMALS = 1
-CPUS = 4
+MAXTHREADS = 4
 
 
 def computeSubgradient(g):
@@ -26,7 +26,7 @@ def computeSubgradient(g):
     subtrees = g.tree_decomposition
 
     lazy_solutions = []
-    pool = multiprocessing.Pool(CPUS)
+    pool = multiprocessing.Pool(MAXTHREADS)
     for subtree in subtrees:
         lazy_solution = pool.apply_async(subtree, ['getMapState', 'DynamicProgramming', {}])
         lazy_solutions.append(lazy_solution)
