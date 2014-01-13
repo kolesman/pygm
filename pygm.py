@@ -155,6 +155,9 @@ class GraphicalModel(object):
 
         factors = [Factor(members, values) for members, values in zip(members_list, values_list)]
 
+        for absent in set(range(n)) - set([factor.members[0] for factor in factors if len(factor.members) == 1]):
+            factors.append(Factor((absent, ), np.zeros(cardinalities[absent])))
+
         return GraphicalModel(factors, make_tree_decomposition=True)
 
     @property

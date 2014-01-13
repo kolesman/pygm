@@ -46,10 +46,12 @@ def computeSubgradient(g):
 
     for i, solution in enumerate(tree_solutions):
         for j, label in enumerate(solution):
-            update[(i, subtrees[i].map_members_index[(j, )], (label, ))] += 1.0
+            if (j, ) in subtrees[i].map_members_index:
+                update[(i, subtrees[i].map_members_index[(j, )], (label, ))] += 1.0
 
-            for t in range(n_trees):
-                update[(t, subtrees[t].map_members_index[(j, )], (label, ))] -= 1.0 / n_trees
+                for t in range(n_trees):
+                    if (j, ) in subtrees[t].map_members_index:
+                        update[(t, subtrees[t].map_members_index[(j, )], (label, ))] -= 1.0 / n_trees
 
     edges = set([factor.members for factor in g.factors if len(factor.members) == 2])
 
@@ -106,7 +108,6 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
         scope['without_imp'] = 0
         scope['max_without_imp'] = 10
         scope['sigma'] = 0
-        print(scope)
 
     if step_rule[0] == 'step_array':
         step_rule[1]['a'] = cPickle.load(open(step_rule[1]['a']))
