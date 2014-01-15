@@ -16,6 +16,8 @@ import utils
 
 import multiprocessing
 
+from copy import deepcopy
+
 
 MAXPRIMALS = 1
 MAXTHREADS = 4
@@ -35,6 +37,8 @@ def computeSubgradient(g):
     pool.join()
 
     tree_solutions = np.array([lazy_solution.get() for lazy_solution in lazy_solutions])
+
+    #tree_solutions = np.array([tree.getMapState('DynamicProgramming', {}) for tree in subtrees])
 
     energy = sum([subtree.Energy(solution) for subtree, solution in zip(subtrees, tree_solutions)])
 
@@ -115,6 +119,9 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
     optimal_solution = None
     if step_rule[0] == 'step_god' or use_optimal_solution:
         optimal_solution = g.optimal_parameters
+        gg = deepcopy(g)
+        updateParams(gg, g.optimal_parameters, 1.0)
+        _, optimal_energy, _ = computeSubgradient(gg)
 
     i = 0
     log = []
@@ -143,8 +150,12 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
         def step_power_norm(r0=1.0, alpha=0.5):
             return r0 / ((1 + i ** alpha) * np.sqrt(gn2))
 
-        def step_god():
-            return utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
+        def step_god(mode='objective', gamma=1.0):
+            if mode == "objective":
+                print(gamma * ((optimal_energy - energy) / sn ** 2))
+                return gamma * ((optimal_energy - energy) / sn ** 2)
+            else:
+                return utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
 
         def step_adaptive(gamma=1.0, **kwarg):
 
@@ -184,6 +195,9 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
             if use_optimal_solution:
                 optimal_step = utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
                 log_line.append(optimal_step)
+
+                distance = np.linalg.norm(utils.dictDiff(optimal_solution, parameters).values())
+                log_line.append(distance)
 
             log.append(log_line)
 

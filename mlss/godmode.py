@@ -10,16 +10,18 @@ import numpy as np
 
 from copy import deepcopy
 
+import utils
+
 
 def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel=8):
 
-    pool = multiprocessing.Pool(parallel)
+    pool = utils.MyPool(parallel)
     lazy_solutions = []
+
+    gms = cPickle.load(open(gms_file))
 
     if cut:
         [i, j] = map(int, cut.split(':'))
-
-    gms = cPickle.load(open(gms_file))
 
     for gm in gms[i:j]:
         gm_copy = deepcopy(gm)
@@ -31,6 +33,7 @@ def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel=8)
         lazy_solutions.append(res)
 
     pool.close()
+    #pool.join()
 
     log = np.dstack([res.get()[1] for res in lazy_solutions])
 
