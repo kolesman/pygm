@@ -94,7 +94,6 @@ def projectionOnDualOptimal(g, primal_optimal, point):
     objective = grb.quicksum(terms)
 
     m.setObjective(objective)
-    print(objective)
 
     # constraints
 
@@ -113,7 +112,6 @@ def projectionOnDualOptimal(g, primal_optimal, point):
                     constr = (constr >= -float(factor.values[l]))
 
                 constr_list.append(constr)
-                print(constr)
 
         if len(factor.members) == 2:
             for l1 in range(factor.values.shape[0]):
@@ -128,10 +126,16 @@ def projectionOnDualOptimal(g, primal_optimal, point):
                         constr = (constr >= -float(factor.values[l1][l2]))
 
                     constr_list.append(constr)
-                    print(constr)
 
     [m.addConstr(constr) for constr in constr_list]
 
     m.optimize()
 
-    return {members: np.array([var.x for var in vars_.ravel()]).reshape(vars_.shape) for members, vars_ in var_dual.items()}
+    unary_proj = {(members, (label, )): vars_[label].x for members, vars_ in var_dual.items()
+                  for label in range(vars_.shape[0]) if len(members) == 1}
+    binary_proj = {(members, (label0, label1)): vars_[label0][label1].x for members, vars_ in var_dual.items() if len(members) == 2
+                   for label0 in range(vars_.shape[0]) for label1 in range(vars_.shape[1])}
+
+    proj = dict(unary_proj.items() + binary_proj.items())
+
+    return proj

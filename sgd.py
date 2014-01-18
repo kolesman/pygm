@@ -51,11 +51,11 @@ def computeSubgradient(g):
     for i, solution in enumerate(tree_solutions):
         for j, label in enumerate(solution):
             if (j, ) in subtrees[i].map_members_index:
-                update[(i, subtrees[i].map_members_index[(j, )], (label, ))] += 1.0
+                update[(i, (j, ), (label, ))] += 1.0
 
                 for t in range(n_trees):
                     if (j, ) in subtrees[t].map_members_index:
-                        update[(t, subtrees[t].map_members_index[(j, )], (label, ))] -= 1.0 / n_trees
+                        update[(t, (j, ), (label, ))] -= 1.0 / n_trees
 
     edges = set([factor.members for factor in g.factors if len(factor.members) == 2])
 
@@ -65,24 +65,34 @@ def computeSubgradient(g):
                 if (u, v) in edges:
                     n_dual = np.sum(g.tree_decomposition_edge_mask[(u, v)])
                     if g.tree_decomposition_edge_mask[(u, v)][i]:
-                        update[(i, subtrees[i].map_members_index[(u, v)], (label0, label1))] += 1.0
+                        update[(i, (u, v), (label0, label1))] += 1.0
 
                         for t in range(n_trees):
                             if g.tree_decomposition_edge_mask[(u, v)][t]:
-                                update[(t, subtrees[t].map_members_index[(u, v)], (label0, label1))] -= 1.0 / n_dual
+                                update[(t, (u, v), (label0, label1))] -= 1.0 / n_dual
 
     update = dict([(key, value) for key, value in update.items() if abs(value) > 1.0e-9])
 
     return update, energy, primal_energy
 
 
-def updateParams(g, update, alpha):
+def updateDDParams(g, update, alpha=1.0):
 
     for key, value in update.items():
         i = key[0]
-        f = key[1]
+        f = g.tree_decomposition[i].map_members_index[key[1]]
         a = key[2]
         g.tree_decomposition[i].factors[f].values[a] += alpha * value
+
+    return 0
+
+
+def updateParams(g, update, alpha=1.0):
+
+    for key, value in update.items():
+        f = g.map_members_index[key[0]]
+        a = key[1]
+        g.factors[f].values[a] += alpha * value
 
     return 0
 
@@ -120,7 +130,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
     if step_rule[0] == 'step_god' or use_optimal_solution:
         optimal_solution = g.optimal_parameters
         gg = deepcopy(g)
-        updateParams(gg, g.optimal_parameters, 1.0)
+        updateDDParams(gg, g.optimal_parameters, 1.0)
         _, optimal_energy, _ = computeSubgradient(gg)
 
     i = 0
@@ -201,7 +211,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
 
             log.append(log_line)
 
-        updateParams(g, update, step)
+        updateDDParams(g, update, step)
         parameters = utils.dictSum(parameters, utils.dictMult(update, step))
 
     if make_log:
