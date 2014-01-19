@@ -141,8 +141,8 @@ def optimalStepDD(g, optimal_primal, point, grad, prev_model=None):
     if prev_model is None:
 
         m = grb.Model()
-        grb.setParam('optimalitytol', 1.0e-2)
-        grb.setParam('psdtol', 1.0)
+        m.setParam('optimalitytol', 1.0e-2)
+        m.setParam('psdtol', 1.0)
 
         alpha = m.addVar(name='alpha')
 
