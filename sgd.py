@@ -18,6 +18,8 @@ import multiprocessing
 
 from copy import deepcopy
 
+import lp
+
 
 MAXPRIMALS = 1
 MAXTHREADS = 4
@@ -104,6 +106,8 @@ def primalSolutions(solutions):
 
 def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optimal_solution=False):
 
+    gg = deepcopy(g)
+
     best_primal = 2 ** 32
     best_dual = -2 ** 32
 
@@ -132,6 +136,9 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
         gg = deepcopy(g)
         updateDDParams(gg, g.optimal_parameters, 1.0)
         _, optimal_energy, _ = computeSubgradient(gg)
+
+    if step_rule[0] == 'step_supergod':
+        scope['prev_model'] = None
 
     i = 0
     log = []
@@ -167,6 +174,11 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
             else:
                 return utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
 
+        def step_supergod(optimal_primal):
+            m, step = lp.optimalStepDD(gg, optimal_primal, parameters, update, prev_model=scope['prev_model'])
+            scope['prev_model'] = m
+            return step
+
         def step_adaptive(gamma=1.0, **kwarg):
 
             update = 0
@@ -191,7 +203,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
         step = eval(step_rule[0])(**step_rule[1])
 
         if verbose:
-            print(best_primal, best_dual, energy, step)
+            print(i, best_primal, best_dual, energy, step)
 
         if 'sigma' in scope:
             scope['sigma'] += step * sn
