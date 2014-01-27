@@ -21,24 +21,19 @@ from copy import deepcopy
 import lp
 
 
-MAXPRIMALS = 1
-MAXTHREADS = 4
-
-
-def computeSubgradient(g, parallel=4):
+def computeSubgradient(g, parallel=0):
 
     subtrees = g.tree_decomposition
 
+    tree_solutions = None
     if parallel:
         lazy_solutions = []
-        pool = multiprocessing.Pool(MAXTHREADS)
+        pool = multiprocessing.Pool(parallel)
         for subtree in subtrees:
             lazy_solution = pool.apply_async(subtree, ['getMapState', 'DynamicProgramming', {}])
             lazy_solutions.append(lazy_solution)
-
         pool.close()
         pool.join()
-
         tree_solutions = np.array([lazy_solution.get() for lazy_solution in lazy_solutions])
     else:
         tree_solutions = np.array([tree.getMapState('DynamicProgramming', {}) for tree in subtrees])
@@ -79,18 +74,18 @@ def computeSubgradient(g, parallel=4):
     return update, energy, primal_energy
 
 
-def updateDDParams(g, update, alpha=1.0):
+def updateDDParams(g, update, alpha):
 
     for key, value in update.items():
         i = key[0]
         f = g.tree_decomposition[i].map_members_index[key[1]]
         a = key[2]
-        g.tree_decomposition[i].factors[f].values[a] += alpha[i] * value
+        g.tree_decomposition[i].factors[f].values[a] += alpha * value
 
     return 0
 
 
-def updateParams(g, update, alpha=1.0):
+def updateParams(g, update, alpha):
 
     for key, value in update.items():
         f = g.map_members_index[key[0]]
@@ -100,47 +95,31 @@ def updateParams(g, update, alpha=1.0):
     return 0
 
 
-def primalSolutions(solutions):
-    primals = product(*[np.unique(solution) for solution in solutions.T])
-    return [primals.next() for dummy in range(MAXPRIMALS)]
+def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
 
-
-def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optimal_solution=False):
-
-    gg = deepcopy(g)
+    g = deepcopy(g)
 
     best_primal = 2 ** 32
     best_dual = -2 ** 32
 
     update, energy, primal_energy = computeSubgradient(g)
 
-    parameters = dict()
-
-    gn2 = np.sum([tree.n_factors for tree in g.tree_decomposition])
-
+    parameters = {}
     scope = {}
+    g_copy = None
 
     if step_rule[0] == 'step_adaptive':
-        scope['delta'] = primal_energy - energy
+        scope['delta'] = (primal_energy - energy) / 3.0
         scope['energy_rec'] = energy
-        scope['B'] = 0.1 * g.average_element * g.n_values
         scope['without_imp'] = 0
         scope['max_without_imp'] = 10
-        scope['sigma'] = 0
 
-    if step_rule[0] == 'step_array':
-        step_rule[1]['a'] = cPickle.load(open(step_rule[1]['a']))
-
-    optimal_solution = None
-    if step_rule[0] == 'step_god' or use_optimal_solution:
-        optimal_solution = g.optimal_parameters
-        gg = deepcopy(g)
-        updateDDParams(gg, g.optimal_parameters, 1.0)
-        _, optimal_energy, _ = computeSubgradient(gg)
+    optimal_solution = g.optimal_parameters if hasattr(g, 'optimal_parameters') else None
 
     if step_rule[0] == "step_supergod":
         scope['prev_model'] = None
         optimal_primal = lp.solveLPonLocalPolytope(g)
+        g_copy = deepcopy(g)
 
     i = 0
     log = []
@@ -160,78 +139,58 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=None, use_optima
         def step_constant(r0=0.01):
             return r0
 
-        def step_array(a=np.ones(maxiter)):
+        def step_array(a):
             return a[i]
 
         def step_power(r0=1.0, alpha=0.5):
             return r0 / ((1 + i ** alpha))
 
         def step_power_norm(r0=1.0, alpha=0.5):
-            return r0 / ((1 + i ** alpha) * np.sqrt(gn2))
+            return r0 / ((1 + i ** alpha) * sn)
 
-        def step_god(mode='objective', gamma=1.0):
-            if mode == "objective":
-                print(gamma * ((optimal_energy - energy) / sn ** 2))
-                return gamma * ((optimal_energy - energy) / sn ** 2)
-            else:
+        def step_god(mode='objective'):
                 return utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
 
         def step_supergod():
-            m, step = lp.optimalStepDD(gg, optimal_primal, parameters, update, prev_model=scope['prev_model'])
+            m, step = lp.optimalStepDD(g_copy, optimal_primal, parameters, update, prev_model=scope['prev_model'])
             scope['prev_model'] = m
             return step
 
-        def step_adaptive(gamma=1.0, **kwarg):
+        def step_adaptive(gamma=0.1, **kwarg):
 
             update = 0
             if energy > scope['energy_rec'] + scope['delta'] / 5:
-                scope['sigma'] = 0
-                scope['without_imp'] = 0
                 update = 1
-            #elif scope['sigma'] > scope['B'] * ((primal_energy - energy) / first_gap):
             elif scope['without_imp'] > scope['max_without_imp']:
-                scope['delta'] = scope['delta'] * 0.75
-                scope['sigma'] = 0
-                scope['without_imp'] = 0
+                scope['delta'] = scope['delta'] * 0.5
                 update = 1
+
+            scope['without_imp'] += 1
 
             if update:
                 scope['energy_rec'] = best_dual
+                scope['without_imp'] = 0
 
             approx = scope['energy_rec'] + scope['delta']
 
-            return gamma * (approx - energy) / sn ** 2
+            return gamma * ((approx - energy) / sn ** 2)
 
         step = eval(step_rule[0])(**step_rule[1])
-
         if verbose:
-            print(i, best_primal, best_dual, energy, step)
-
-        if 'sigma' in scope:
-            scope['sigma'] += step * sn
-            scope['without_imp'] += 1
-
-        i += 1
+            print(i, "%.4f" % best_primal, "%.4f" % best_dual, "%.4f" % energy, "%.4f" % step)
 
         if make_log:
-            log_line = [best_primal, best_dual, energy, sn, step[0]]
 
-            if use_optimal_solution:
-                optimal_step = utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
-                log_line.append(optimal_step)
+            distance = np.linalg.norm(utils.dictDiff(optimal_solution, parameters).values())
 
-                distance = np.linalg.norm(utils.dictDiff(optimal_solution, parameters).values())
-                log_line.append(distance)
-
-            if 'prev_model' in scope:
-                #step_supergod()
-                log_line.append(scope['prev_model'].objval)
-
+            log_line = [best_primal, best_dual, energy, sn, distance, step]
             log.append(log_line)
 
         updateDDParams(g, update, step)
         for j in range(len(g.tree_decomposition)):
-            parameters = utils.dictSum(parameters, utils.dictMult(dict([(key, val) for key, val in update.items() if key[0] == j]), step[j]))
+            parameters = updateDDParams(g, update, step)
+
+        i += 1
 
     if make_log:
         return parameters, np.array(log)

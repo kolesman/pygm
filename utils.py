@@ -64,3 +64,20 @@ def dictMult(d, alpha):
 
 def dictDot(d1, d2, default=0):
     return sum(d1[key] * d2[key] for key in set(d1) & set(d2))
+
+
+def getUpdateFromProjectionModel(m):
+
+    update = {}
+
+    for i, duals in enumerate(m._duals):
+        for members, variables in duals.items():
+            if len(members) == 1:
+                for u, var in enumerate(variables):
+                    update[(i, members, (u, ))] = var.x
+            if len(members) == 2:
+                for u, var_line in enumerate(variables):
+                    for v, var in enumerate(var_line):
+                        update[(i, members, (u, v))] = var.x
+
+    return update

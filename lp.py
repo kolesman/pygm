@@ -45,7 +45,7 @@ def solveLPonLocalPolytope(g):
 
     m.optimize()
 
-    return {members: np.array([var.x for var in vars_.ravel()]).reshape(vars_.shape) for members, vars_ in variables.items()}
+    return m.objval, {members: np.array([var.x for var in vars_.ravel()]).reshape(vars_.shape) for members, vars_ in variables.items()}
 
 
 def addSubproblemConstraints(m, alpha, g, primal_optimal, grad, point):
@@ -144,7 +144,7 @@ def optimalStepDD(g, optimal_primal, point, grad, prev_model=None):
         m.setParam('barconvtol', 1.0e-6)
         m.setParam('psdtol', 1.0)
 
-        alpha = [m.addVar(name='alpha') for dummy in range(len(g.tree_decomposition))]
+        alpha = m.addVar(name='alpha')
 
         objective = 0
 
@@ -160,7 +160,7 @@ def optimalStepDD(g, optimal_primal, point, grad, prev_model=None):
             dgrad_i = defaultdict(int)
             dgrad_i.update(grad_i)
 
-            var_dual, obj = addSubproblemConstraints(m, alpha[i], tree, optimal_primal, dgrad_i, dpoint_i)
+            var_dual, obj = addSubproblemConstraints(m, alpha, tree, optimal_primal, dgrad_i, dpoint_i)
 
             duals.append(var_dual)
 
@@ -211,21 +211,21 @@ def optimalStepDD(g, optimal_primal, point, grad, prev_model=None):
                 if len(variables.shape) == 1:
                     for l in range(variables.shape[0]):
 
-                        terms.append((variables[l] - (dpointi[(members, (l,))] + alpha[i] * dgradi[(members, (l,))])) *
-                                    (variables[l] - (dpointi[(members, (l,))] + alpha[i] * dgradi[(members, (l,))])))
+                        terms.append((variables[l] - (dpointi[(members, (l,))] + alpha * dgradi[(members, (l,))])) *
+                                    (variables[l] - (dpointi[(members, (l,))] + alpha * dgradi[(members, (l,))])))
 
                 if len(variables.shape) == 2:
                     for l1 in range(variables.shape[0]):
                         for l2 in range(variables.shape[1]):
-                            terms.append((variables[l1][l2] - (dpointi[(members, (l1, l2))] + alpha[i] * dgradi[(members, (l1, l2))])) *
-                                        (variables[l1][l2] - (dpointi[(members, (l1, l2))] + alpha[i] * dgradi[(members, (l1, l2))])))
+                            terms.append((variables[l1][l2] - (dpointi[(members, (l1, l2))] + alpha * dgradi[(members, (l1, l2))])) *
+                                        (variables[l1][l2] - (dpointi[(members, (l1, l2))] + alpha * dgradi[(members, (l1, l2))])))
 
         objective = grb.quicksum(terms)
         m.setObjective(objective)
 
     m.optimize()
 
-    return m, [a.x for a in alpha]
+    #return m, alpha.x
 
     #m.optimize()
 
