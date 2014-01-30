@@ -7,14 +7,14 @@ import numpy as np
 from collections import defaultdict
 
 
-eps = 1.0e-9
+eps = 1.0e-6
 
 
-def solveLPonLocalPolytope(g):
+def constructLPonLocalPolytope(g):
 
     m = grb.Model()
 
-    variables = {factor.members: np.array([m.addVar(0.0, 1.0)
+    variables = {factor.members: np.array([m.addVar(vtype=grb.GRB.BINARY, name="order" + str(len(factor.members)))
                  for dummy in range(np.prod(factor.values.shape))]).reshape(factor.values.shape)
                  for factor in g.factors}
 
@@ -43,9 +43,58 @@ def solveLPonLocalPolytope(g):
 
     [m.addConstr(constraint) for constraint in chain(unary_constraints, binary_constraints1, binary_constraints2)]
 
+    m._variables = variables
+
+    return m
+
+
+def solveLPonLocalPolytope(g):
+
+    m = constructLPonLocalPolytope(g)
+
     m.optimize()
 
+    variables = m._variables
+
     return m.objval, {members: np.array([var.x for var in vars_.ravel()]).reshape(vars_.shape) for members, vars_ in variables.items()}
+
+
+def solveLPonLocalPolytopeAll(g):
+
+    solutions = []
+
+    m = constructLPonLocalPolytope(g)
+    variables = m._variables
+
+    node_orders = np.zeros(g.n_vars).astype('int')
+
+    for members in variables.keys():
+        if len(members) == 2:
+            node_orders[members[0]] += 1
+            node_orders[members[1]] += 1
+
+    m.optimize()
+    energy = m.objVal
+
+    assert(np.all([(v.x <= eps) or (v.x >= 1.0 - eps) for v in m.getVars()]))
+
+    while True:
+
+        cut_binary = grb.quicksum([var for var in m.getVars() if var.x > 1 - eps and var.varName == 'order2'])
+        cut_unary = grb.quicksum([var * (1 - int(node_orders[members[0]])) for members, var_list in variables.items() if len(members) == 1
+                                  for var in var_list if var.x > 1 - eps])
+
+        m.addConstr((cut_binary + cut_unary) <= 0)
+
+        m.optimize()
+        assert(np.all([(v.x <= eps) or (v.x >= 1 - eps) for v in m.getVars()]))
+        energy_prev = energy
+        energy = m.objVal
+
+        if np.abs(energy_prev - energy) > 0.001:
+            break
+
+    return solutions
 
 
 def addSubproblemConstraints(m, alpha, g, primal_optimal, grad, point):
