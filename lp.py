@@ -6,15 +6,17 @@ import numpy as np
 
 from collections import defaultdict
 
+import utils
+
 
 eps = 1.0e-6
 
 
-def constructLPonLocalPolytope(g):
+def constructLPonLocalPolytope(g, relax=True):
 
     m = grb.Model()
 
-    variables = {factor.members: np.array([m.addVar(vtype=grb.GRB.BINARY, name="order" + str(len(factor.members)))
+    variables = {factor.members: np.array([m.addVar(lb=0.0, ub=1.0, name="order" + str(len(factor.members)))
                  for dummy in range(np.prod(factor.values.shape))]).reshape(factor.values.shape)
                  for factor in g.factors}
 
@@ -45,6 +47,9 @@ def constructLPonLocalPolytope(g):
 
     m._variables = variables
 
+    if relax:
+        m.relax()
+
     return m
 
 
@@ -59,11 +64,12 @@ def solveLPonLocalPolytope(g):
     return m.objval, {members: np.array([var.x for var in vars_.ravel()]).reshape(vars_.shape) for members, vars_ in variables.items()}
 
 
-def solveLPonLocalPolytopeAll(g):
+def solveLPonLocalPolytopeAll(g, max_solutions=10):
 
     solutions = []
 
-    m = constructLPonLocalPolytope(g)
+    m = constructLPonLocalPolytope(g, relax=False)
+    m.setParam('OutputFlag', False)
     variables = m._variables
 
     node_orders = np.zeros(g.n_vars).astype('int')
@@ -74,27 +80,93 @@ def solveLPonLocalPolytopeAll(g):
             node_orders[members[1]] += 1
 
     m.optimize()
-    energy = m.objVal
-
     assert(np.all([(v.x <= eps) or (v.x >= 1.0 - eps) for v in m.getVars()]))
+
+    energy = m.objVal
+    solutions.append(utils.getSolutionFromLPModel(m))
 
     while True:
 
-        cut_binary = grb.quicksum([var for var in m.getVars() if var.x > 1 - eps and var.varName == 'order2'])
+        cut_binary = grb.quicksum([var for var in m.getVars() if var.x > (1 - eps) and var.varName == 'order2'])
         cut_unary = grb.quicksum([var * (1 - int(node_orders[members[0]])) for members, var_list in variables.items() if len(members) == 1
-                                  for var in var_list if var.x > 1 - eps])
+                                  for var in var_list if var.x > (1 - eps)])
 
         m.addConstr((cut_binary + cut_unary) <= 0)
 
         m.optimize()
         assert(np.all([(v.x <= eps) or (v.x >= 1 - eps) for v in m.getVars()]))
-        energy_prev = energy
-        energy = m.objVal
 
-        if np.abs(energy_prev - energy) > 0.001:
+        energy_current = m.objVal
+
+        if (energy_current - energy) / np.abs(energy) > 0.001:
+            break
+
+        solutions.append(utils.getSolutionFromLPModel(m))
+
+        max_solutions -= 1
+
+        if max_solutions <= 1:
             break
 
     return solutions
+
+
+def findSteepestGradient(g, tree_solutions, relax=True):
+
+    n_trees = len(g.tree_decomposition)
+
+    m = grb.Model()
+    m.setParam('OutputFlag', False)
+    coeffs = [[m.addVar(lb=0.0, ub=1.0) for solution in tree_solution] for tree_solution in tree_solutions]
+
+    m.update()
+
+    if relax:
+        m.relax()
+
+    # Constraints
+    [m.addConstr(grb.quicksum(linear_comb) == 1.0) for linear_comb in coeffs]
+
+    # Subgradient
+
+    update = defaultdict(int)
+
+    for i, solution_list in enumerate(tree_solutions):
+        for j, tree_solution in enumerate(solution_list):
+            for k, label in enumerate(tree_solution):
+                if (j, ) in g.tree_decomposition[i].map_members_index:
+                    update[(i, (k, ), (label, ))] += coeffs[i][j] * 1.0
+
+                    for t in range(n_trees):
+                        update[(t, (k, ), (label, ))] -= coeffs[i][j] / n_trees
+
+    edges = set([factor.members for factor in g.factors if len(factor.members) == 2])
+
+    for i, solution_list in enumerate(tree_solutions):
+        for j, tree_solution in enumerate(solution_list):
+            for u, label0 in enumerate(tree_solution):
+                for v, label1 in enumerate(tree_solution):
+                    if (u, v) in edges:
+                        n_dual = np.sum(g.tree_decomposition_edge_mask[(u, v)])
+                        if g.tree_decomposition_edge_mask[(u, v)][i]:
+                            update[(i, (u, v), (label0, label1))] += coeffs[i][j] * 1.0
+
+                            for t in range(n_trees):
+                                if g.tree_decomposition_edge_mask[(u, v)][t]:
+                                    update[(t, (u, v), (label0, label1))] -= coeffs[i][j] / n_dual
+
+    # Objective
+    obj = grb.quicksum([expr * expr for members, expr in update.items() if len(members) == 1])
+    m.setObjective(obj)
+
+    ######
+
+    m.optimize()
+
+    for key, value in update.items():
+        update[key] = value.getValue()
+
+    return update
 
 
 def addSubproblemConstraints(m, alpha, g, primal_optimal, grad, point):

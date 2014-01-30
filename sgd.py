@@ -21,7 +21,14 @@ from copy import deepcopy
 import lp
 
 
-def computeSubgradient(g, parallel=0):
+#def cleverTreeSolutions(g):
+#
+#    tree_solutions = [lp.solveLPonLocalPolytopeAll(tree) for tree in subtrees]
+#
+#    linear_combination = lp.findMostConsistentSolution(tree_solutions)
+
+
+def computeSubgradient(g, parallel=0, clever=False):
 
     subtrees = g.tree_decomposition
 
@@ -36,40 +43,48 @@ def computeSubgradient(g, parallel=0):
         pool.join()
         tree_solutions = np.array([lazy_solution.get() for lazy_solution in lazy_solutions])
     else:
-        tree_solutions = np.array([tree.getMapState('DynamicProgramming', {}) for tree in subtrees])
+        if not clever:
+            tree_solutions = np.array([tree.getMapState('DynamicProgramming', {}) for tree in subtrees])
+            tree_solutions_basic = deepcopy(tree_solutions)
+        else:
+            tree_solutions = [lp.solveLPonLocalPolytopeAll(tree, max_solutions=10) for tree in subtrees]
+            tree_solutions_basic = np.array([x[0] for x in tree_solutions])
 
-    energy = sum([subtree.Energy(solution) for subtree, solution in zip(subtrees, tree_solutions)])
+    energy = sum([subtree.Energy(solution) for subtree, solution in zip(subtrees, tree_solutions_basic)])
 
-    primal_solution = [Counter(preds).most_common()[0][0] for preds in tree_solutions.T]
+    primal_solution = [Counter(preds).most_common()[0][0] for preds in tree_solutions_basic.T]
     primal_energy = g.Energy(primal_solution)
 
-    update = defaultdict(int)
-    n_trees = len(subtrees)
+    if clever:
+        update = lp.findSteepestGradient(g, tree_solutions, relax=True)
+    else:
+        update = defaultdict(int)
+        n_trees = len(subtrees)
 
-    for i, solution in enumerate(tree_solutions):
-        for j, label in enumerate(solution):
-            if (j, ) in subtrees[i].map_members_index:
-                update[(i, (j, ), (label, ))] += 1.0
+        for i, solution in enumerate(tree_solutions):
+            for j, label in enumerate(solution):
+                if (j, ) in subtrees[i].map_members_index:
+                    update[(i, (j, ), (label, ))] += 1.0
 
-                for t in range(n_trees):
-                    if (j, ) in subtrees[t].map_members_index:
-                        update[(t, (j, ), (label, ))] -= 1.0 / n_trees
+                    for t in range(n_trees):
+                        if (j, ) in subtrees[t].map_members_index:
+                            update[(t, (j, ), (label, ))] -= 1.0 / n_trees
 
-    edges = set([factor.members for factor in g.factors if len(factor.members) == 2])
+        edges = set([factor.members for factor in g.factors if len(factor.members) == 2])
 
-    for i, solution in enumerate(tree_solutions):
-        for u, label0 in enumerate(solution):
-            for v, label1 in enumerate(solution):
-                if (u, v) in edges:
-                    n_dual = np.sum(g.tree_decomposition_edge_mask[(u, v)])
-                    if g.tree_decomposition_edge_mask[(u, v)][i]:
-                        update[(i, (u, v), (label0, label1))] += 1.0
+        for i, solution in enumerate(tree_solutions):
+            for u, label0 in enumerate(solution):
+                for v, label1 in enumerate(solution):
+                    if (u, v) in edges:
+                        n_dual = np.sum(g.tree_decomposition_edge_mask[(u, v)])
+                        if g.tree_decomposition_edge_mask[(u, v)][i]:
+                            update[(i, (u, v), (label0, label1))] += 1.0
 
-                        for t in range(n_trees):
-                            if g.tree_decomposition_edge_mask[(u, v)][t]:
-                                update[(t, (u, v), (label0, label1))] -= 1.0 / n_dual
+                            for t in range(n_trees):
+                                if g.tree_decomposition_edge_mask[(u, v)][t]:
+                                    update[(t, (u, v), (label0, label1))] -= 1.0 / n_dual
 
-    update = dict([(key, value) for key, value in update.items() if abs(value) > 1.0e-9])
+        update = dict([(key, value) for key, value in update.items() if abs(value) > 1.0e-9])
 
     return update, energy, primal_energy
 
@@ -109,7 +124,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
     g_copy = None
 
     if step_rule[0] == 'step_adaptive':
-        scope['delta'] = (primal_energy - energy) / 3.0
+        scope['delta'] = (primal_energy - energy)
         scope['energy_rec'] = energy
         scope['without_imp'] = 0
         scope['max_without_imp'] = 10
@@ -126,7 +141,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
 
     while i < maxiter:
 
-        update, energy, primal_energy = computeSubgradient(g)
+        update, energy, primal_energy = computeSubgradient(g, clever=True)
 
         best_dual = max(best_dual, energy)
         best_primal = min(best_primal, primal_energy)
@@ -156,7 +171,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
             scope['prev_model'] = m
             return step
 
-        def step_adaptive(gamma=0.1, **kwarg):
+        def step_adaptive(gamma=1.0, **kwarg):
 
             update = 0
             if energy > scope['energy_rec'] + scope['delta'] / 5:
@@ -187,8 +202,9 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
             log.append(log_line)
 
         updateDDParams(g, update, step)
-        for j in range(len(g.tree_decomposition)):
-            parameters = updateDDParams(g, update, step)
+        parameters = utils.dictSum(parameters, utils.dictMult(update, step))
+        #for j in range(len(g.tree_decomposition)):
+        #    parameters = updateDDParams(g, update, step)
 
         i += 1
 

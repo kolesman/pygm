@@ -81,3 +81,16 @@ def getUpdateFromProjectionModel(m):
                         update[(i, members, (u, v))] = var.x
 
     return update
+
+
+def getSolutionFromLPModel(m):
+
+    solution = {}
+
+    for members, var_list in m._variables.items():
+        if len(members) == 1:
+            solution[members[0]] = np.argmax([v.x for v in var_list])
+
+    solution = map(lambda x: x[1], sorted(solution.items()))
+
+    return solution
