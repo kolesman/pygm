@@ -58,7 +58,7 @@ def computeSubgradient(g, parallel=0, clever=False):
     if clever:
         update = lp.findSteepestGradient(g, tree_solutions, relax=True)
     else:
-        update = defaultdict(int)
+        update = defaultdict(float)
         n_trees = len(subtrees)
 
         for i, solution in enumerate(tree_solutions):
@@ -110,7 +110,7 @@ def updateParams(g, update, alpha):
     return 0
 
 
-def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
+def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False, clever_threshold=1000000):
 
     g = deepcopy(g)
 
@@ -119,9 +119,10 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
 
     update, energy, primal_energy = computeSubgradient(g)
 
+    optimal_objective, optimal_primal = lp.solveLPonLocalPolytope(g)
+
     parameters = {}
     scope = {}
-    g_copy = None
 
     if step_rule[0] == 'step_adaptive':
         scope['delta'] = (primal_energy - energy)
@@ -133,15 +134,13 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
 
     if step_rule[0] == "step_supergod":
         scope['prev_model'] = None
-        optimal_primal = lp.solveLPonLocalPolytope(g)
-        g_copy = deepcopy(g)
 
     i = 0
     log = []
 
     while i < maxiter:
 
-        update, energy, primal_energy = computeSubgradient(g, clever=True)
+        update, energy, primal_energy = computeSubgradient(g, clever=i >= clever_threshold)
 
         best_dual = max(best_dual, energy)
         best_primal = min(best_primal, primal_energy)
@@ -164,10 +163,10 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
             return r0 / ((1 + i ** alpha) * sn)
 
         def step_god(mode='objective'):
-                return utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
+            return utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
 
         def step_supergod():
-            m, step = lp.optimalStepDD(g_copy, optimal_primal, parameters, update, prev_model=scope['prev_model'])
+            m, step = lp.optimalStepDD(g, optimal_primal, parameters, update, prev_model=scope['prev_model'])
             scope['prev_model'] = m
             return step
 
@@ -198,7 +197,10 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False):
 
             distance = np.linalg.norm(utils.dictDiff(optimal_solution, parameters).values())
 
-            log_line = [best_primal, best_dual, energy, sn, distance, step]
+            gn = np.sum([tree.n_factors for tree in g.tree_decomposition])
+            theoretical_imp = (optimal_objective - energy) ** 2 / gn
+
+            log_line = [best_primal, best_dual, energy, sn, distance, step, theoretical_imp]
             log.append(log_line)
 
         updateDDParams(g, update, step)

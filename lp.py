@@ -16,7 +16,7 @@ def constructLPonLocalPolytope(g, relax=True):
 
     m = grb.Model()
 
-    variables = {factor.members: np.array([m.addVar(lb=0.0, ub=1.0, name="order" + str(len(factor.members)))
+    variables = {factor.members: np.array([m.addVar(lb=0.0, vtype=grb.GRB.BINARY if not relax else grb.GRB.CONTINUOUS, name="order" + str(len(factor.members)))
                  for dummy in range(np.prod(factor.values.shape))]).reshape(factor.values.shape)
                  for factor in g.factors}
 
@@ -47,15 +47,12 @@ def constructLPonLocalPolytope(g, relax=True):
 
     m._variables = variables
 
-    if relax:
-        m.relax()
-
     return m
 
 
-def solveLPonLocalPolytope(g):
+def solveLPonLocalPolytope(g, relax=True):
 
-    m = constructLPonLocalPolytope(g)
+    m = constructLPonLocalPolytope(g, relax)
 
     m.optimize()
 
@@ -153,7 +150,7 @@ def findSteepestGradient(g, tree_solutions, relax=True):
 
                             for t in range(n_trees):
                                 if g.tree_decomposition_edge_mask[(u, v)][t]:
-                                    update[(t, (u, v), (label0, label1))] -= coeffs[i][j] / n_dual
+                                    update[(t, (u, v), (label0, label1))] -= coeffs[i][j] / float(n_dual)
 
     # Objective
     obj = grb.quicksum([expr * expr for members, expr in update.items() if len(members) == 1])
