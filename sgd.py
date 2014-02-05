@@ -110,7 +110,7 @@ def updateParams(g, update, alpha):
     return 0
 
 
-def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False, clever_threshold=1000000):
+def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False, clever_threshold=1000000, heavy_ball=False):
 
     g = deepcopy(g)
 
@@ -125,7 +125,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False, clever_th
     scope = {}
 
     if step_rule[0] == 'step_adaptive':
-        scope['delta'] = (primal_energy - energy)
+        scope['delta'] = (primal_energy - energy) / 2
         scope['energy_rec'] = energy
         scope['without_imp'] = 0
         scope['max_without_imp'] = 10
@@ -138,9 +138,18 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False, clever_th
     i = 0
     log = []
 
+    update = {}
+
     while i < maxiter:
 
-        update, energy, primal_energy = computeSubgradient(g, clever=i >= clever_threshold)
+        update_new, energy, primal_energy = computeSubgradient(g, clever=i >= clever_threshold)
+
+        if heavy_ball and i > 0:
+            beta = max(0.0, (-1.5 * utils.dictDot(update, update_new)) / (utils.dictDot(update, update)))
+        else:
+            beta = 0.0
+
+        update = utils.dictSum(update_new, utils.dictMult(update, beta))
 
         best_dual = max(best_dual, energy)
         best_primal = min(best_primal, primal_energy)
@@ -162,8 +171,11 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False, clever_th
         def step_power_norm(r0=1.0, alpha=0.5):
             return r0 / ((1 + i ** alpha) * sn)
 
-        def step_god(mode='objective'):
+        def step_god():
             return utils.dictDot(update, utils.dictDiff(optimal_solution, parameters)) / sn ** 2
+
+        def step_godobjective():
+            return (optimal_objective - energy) / sn ** 2
 
         def step_supergod():
             m, step = lp.optimalStepDD(g, optimal_primal, parameters, update, prev_model=scope['prev_model'])
