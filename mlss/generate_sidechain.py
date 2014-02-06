@@ -2,6 +2,7 @@
 
 import pygm
 import sgd
+import lp
 
 import cPickle
 
@@ -26,19 +27,34 @@ def main(maxiter, folder, file_name):
     random.seed(31337)
     random.shuffle(gms)
 
-    pool = utils.MyPool(n_cpus / 3)
-    lazy_solutions = []
+    pool = multiprocessing.Pool(n_cpus)
+    lazy_optimal_primals = []
     for gm in gms:
-        res = pool.apply_async(sgd.sgd, [gm],
-                               {'verbose': True, 'maxiter': maxiter, 'step_rule': ('step_adaptive', {})})
-        gm.tree_decomposition = gm._treeDecomposition()
-        lazy_solutions.append(res)
+        res = pool.apply_async(lp.solveLPonLocalPolytope, [gm])
+        lazy_optimal_primals.append(res)
 
     pool.close()
+    optimal_primals = [solution.get()[1] for solution in lazy_optimal_primals]
 
-    solutions = [solution.get() for solution in lazy_solutions]
+    pool = multiprocessing.Pool(n_cpus)
+    lazy_subgradients = []
+    for gm in gms:
+        res = pool.apply_async(sgd.computeSubgradient, [gm])
+        lazy_subgradients.append(res)
 
-    for gm, solution in zip(gms, solutions):
+    pool.close()
+    subgradients = [res.get()[0] for res in lazy_subgradients]
+
+    pool = multiprocessing.Pool(2)
+    lazy_optimal_parameters = []
+    for gm, optimal_primal, subgr in zip(gms, optimal_primals, subgradients):
+        res = pool.apply_async(lp.optimalStepDD, [gm, optimal_primal, {}, subgr, None, True])
+        lazy_optimal_parameters.append(res)
+
+    pool.close()
+    optimal_parameters = [res.get() for res in lazy_optimal_parameters]
+
+    for gm, solution in zip(gms, optimal_parameters):
         gm.optimal_parameters = solution
 
     cPickle.dump(gms, open(file_name, "w"), protocol=2)

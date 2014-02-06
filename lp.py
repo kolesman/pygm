@@ -12,11 +12,11 @@ import utils
 eps = 1.0e-6
 
 
-def constructLPonLocalPolytope(g, relax=True):
+def constructLPonLocalPolytope(g):
 
     m = grb.Model()
 
-    variables = {factor.members: np.array([m.addVar(lb=0.0, vtype=grb.GRB.BINARY if not relax else grb.GRB.CONTINUOUS, name="order" + str(len(factor.members)))
+    variables = {factor.members: np.array([m.addVar(lb=0.0, ub=1.0, name="order" + str(len(factor.members)))
                  for dummy in range(np.prod(factor.values.shape))]).reshape(factor.values.shape)
                  for factor in g.factors}
 
@@ -50,9 +50,9 @@ def constructLPonLocalPolytope(g, relax=True):
     return m
 
 
-def solveLPonLocalPolytope(g, relax=True):
+def solveLPonLocalPolytope(g):
 
-    m = constructLPonLocalPolytope(g, relax)
+    m = constructLPonLocalPolytope(g)
 
     m.optimize()
 
@@ -254,12 +254,12 @@ def addSubproblemConstraints(m, alpha, g, primal_optimal, grad, point):
     return var_dual, objective
 
 
-def optimalStepDD(g, optimal_primal, point, grad, prev_model=None):
+def optimalStepDD(g, optimal_primal, point, grad, prev_model=None, return_projection=False):
 
     if prev_model is None:
 
         m = grb.Model()
-        m.setParam('barconvtol', 1.0e-6)
+        m.setParam('barconvtol', 1.0e-2)
         m.setParam('psdtol', 1.0)
 
         alpha = m.addVar(name='alpha')
@@ -302,7 +302,8 @@ def optimalStepDD(g, optimal_primal, point, grad, prev_model=None):
             m.addConstr(constr == 0)
             #print(constr == 0)
 
-        m.setObjective(objective)
+        #m.setObjective(objective)
+        m.setObjective(1)
 
         m._duals = duals
         m._alpha = alpha
@@ -343,7 +344,10 @@ def optimalStepDD(g, optimal_primal, point, grad, prev_model=None):
 
     m.optimize()
 
-    #return m, alpha.x
+    if return_projection:
+        return utils.getUpdateFromProjectionModel(m)
+    else:
+        return m, alpha.x
 
     #m.optimize()
 

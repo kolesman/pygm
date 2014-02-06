@@ -15,7 +15,7 @@ import utils
 
 def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel=8):
 
-    pool = utils.MyPool(parallel)
+    pool = multiprocessing.Pool(parallel)
     lazy_solutions = []
 
     gms = cPickle.load(open(gms_file))
@@ -24,8 +24,7 @@ def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel=8)
         [i, j] = map(int, cut.split(':'))
 
     for gm in gms[i:j]:
-        gm_copy = deepcopy(gm)
-        res = pool.apply_async(sgd.sgd, [gm_copy],
+        res = pool.apply_async(sgd.sgd, [gm],
                                {'maxiter': maxiter,
                                 'make_log': True,
                                 'step_rule': (step_rule, eval(step_parameters)),
@@ -33,7 +32,7 @@ def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel=8)
         lazy_solutions.append(res)
 
     pool.close()
-    #pool.join()
+    pool.join()
 
     log = np.dstack([res.get()[1] for res in lazy_solutions])
 
