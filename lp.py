@@ -47,6 +47,9 @@ def constructLPonLocalPolytope(g):
 
     m._variables = variables
 
+    if relax:
+        m.relax()
+
     return m
 
 
@@ -150,7 +153,7 @@ def findSteepestGradient(g, tree_solutions, relax=True):
 
                             for t in range(n_trees):
                                 if g.tree_decomposition_edge_mask[(u, v)][t]:
-                                    update[(t, (u, v), (label0, label1))] -= coeffs[i][j] / float(n_dual)
+                                    update[(t, (u, v), (label0, label1))] -= coeffs[i][j] / n_dual
 
     # Objective
     obj = grb.quicksum([expr * expr for members, expr in update.items() if len(members) == 1])

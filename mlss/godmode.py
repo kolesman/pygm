@@ -28,7 +28,7 @@ def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel=8)
                                {'maxiter': maxiter,
                                 'make_log': True,
                                 'step_rule': (step_rule, eval(step_parameters)),
-                                'use_optimal_solution': True})
+                                'heavy': True})
         lazy_solutions.append(res)
 
     pool.close()

@@ -117,6 +117,21 @@ class GraphicalModel(object):
         return GraphicalModel(factor_list, make_tree_decomposition=make_tree_decomposition)
 
     @staticmethod
+    def loadFromH5(file_name):
+
+        gm = opengm.loadGm(file_name)
+
+        cardinalities = [gm.numberOfLabels(i) for i in range(gm.numberOfVariables)]
+
+        factors = []
+        for factor in list(gm.factors()):
+            members = tuple(map(int, np.array(factor.variableIndices)))
+            values = factor.copyValues().reshape(tuple([cardinalities[member] for member in members])).T
+            factors.append(Factor(members, values))
+
+        return GraphicalModel(factors, make_tree_decomposition=True)
+
+    @staticmethod
     def loadFromUAI(file_name):
         f = open(file_name)
 
