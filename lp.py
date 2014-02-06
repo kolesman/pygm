@@ -47,9 +47,6 @@ def constructLPonLocalPolytope(g):
 
     m._variables = variables
 
-    if relax:
-        m.relax()
-
     return m
 
 
@@ -305,8 +302,8 @@ def optimalStepDD(g, optimal_primal, point, grad, prev_model=None, return_projec
             m.addConstr(constr == 0)
             #print(constr == 0)
 
-        #m.setObjective(objective)
-        m.setObjective(1)
+        m.setObjective(objective)
+        #m.setObjective(1)
 
         m._duals = duals
         m._alpha = alpha

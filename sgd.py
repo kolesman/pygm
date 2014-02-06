@@ -212,7 +212,7 @@ def sgd(g, maxiter=300, step_rule=None, verbose=False, make_log=False, clever_th
             gn = np.sum([tree.n_factors for tree in g.tree_decomposition])
             theoretical_imp = (optimal_objective - energy) ** 2 / gn
 
-            log_line = [best_primal, best_dual, energy, sn, distance, step, theoretical_imp]
+            log_line = [best_primal, best_dual, energy, sn, distance, step, theoretical_imp, optimal_objective]
             log.append(log_line)
 
         updateDDParams(g, update, step)

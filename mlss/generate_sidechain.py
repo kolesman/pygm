@@ -27,6 +27,11 @@ def main(maxiter, folder, file_name):
     random.seed(31337)
     random.shuffle(gms)
 
+    gms = filter(lambda x: x.n_vars <= 180, gms)
+
+    print(len(gms))
+    exit()
+
     pool = multiprocessing.Pool(n_cpus)
     lazy_optimal_primals = []
     for gm in gms:
@@ -45,7 +50,7 @@ def main(maxiter, folder, file_name):
     pool.close()
     subgradients = [res.get()[0] for res in lazy_subgradients]
 
-    pool = multiprocessing.Pool(2)
+    pool = multiprocessing.Pool(n_cpus)
     lazy_optimal_parameters = []
     for gm, optimal_primal, subgr in zip(gms, optimal_primals, subgradients):
         res = pool.apply_async(lp.optimalStepDD, [gm, optimal_primal, {}, subgr, None, True])
