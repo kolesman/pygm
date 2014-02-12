@@ -14,7 +14,7 @@ import time
 
 from copy import deepcopy
 
-import utils
+import pygm.utils as utils
 
 
 class Factor(object):

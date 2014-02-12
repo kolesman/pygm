@@ -1,12 +1,14 @@
 #!/usr/bin/python
 
-import pygm
-import sgd
+import pygm.mgm as mgm
+import pygm.sgd as sgd
+import pygm.lp as lp
 
 import cPickle
 
 import multiprocessing
 
+import pygm.utils as utils
 
 from optparse import OptionParser
 
@@ -16,22 +18,9 @@ print(n_cpus)
 
 
 def main(n, m, k, sigma, dmax, maxiter, file_name):
-    gms = [pygm.GraphicalModel.generateRandomGrid(m, k, sigma, dmax, make_tree_decomposition=True) for i in range(n)]
+    gms = [mgm.GraphicalModel.generateRandomGrid(m, k, sigma, dmax, make_tree_decomposition=True) for i in range(n)]
 
-    pool = multiprocessing.Pool(n_cpus)
-    lazy_solutions = []
-    for gm in gms:
-        res = pool.apply_async(sgd.sgd, [gm],
-                               {'verbose': True, 'maxiter': maxiter, 'step_rule': ('step_adaptive', {'delta': 1000.0, 'B': 100.0})})
-        gm.tree_decomposition = gm._treeDecomposition()
-        lazy_solutions.append(res)
-
-    pool.close()
-
-    solutions = [solution.get() for solution in lazy_solutions]
-
-    for gm, solution in zip(gms, solutions):
-        gm.optimal_parameters = solution
+    lp.prepareGMs(gms, n_cpus=n_cpus)
 
     cPickle.dump(gms, open(file_name, "w"), protocol=2)
 

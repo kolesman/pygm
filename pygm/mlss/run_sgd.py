@@ -4,13 +4,13 @@ from optparse import OptionParser
 import cPickle
 import multiprocessing
 
-import sgd
+import mgm.sgd as sgd
 
 import numpy as np
 
 from copy import deepcopy
 
-import utils
+import mgm.utils as utils
 
 
 def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel, heavyball):
@@ -22,6 +22,9 @@ def main(gms_file, maxiter, step_rule, step_parameters, cut, output, parallel, h
 
     if cut:
         [i, j] = map(int, cut.split(':'))
+    else:
+        i = 0
+        j = None
 
     for gm in gms[i:j]:
         res = pool.apply_async(sgd.sgd, [gm],
