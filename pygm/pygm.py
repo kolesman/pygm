@@ -1,26 +1,22 @@
 import sys
 import numpy as np
 
-import opengm
-
-import dai
-
 from compiler.ast import flatten
 
-from collections import defaultdict
-from collections import Counter
-
+from collections import defaultdict, Counter
 import time
-
 from copy import deepcopy
 
-import pygm.utils as utils
+import utils
+
+import opengm
+import dai
 
 
 class Factor(object):
 
     def __init__(self, members, values, probability=False):
-        self.__n = len(members)
+        self.__order = len(members)
         self.__members = members
 
         values = np.array(values).astype('longdouble')
@@ -30,14 +26,19 @@ class Factor(object):
         assert(len(values.shape) == len(members))
 
         if probability:
-            illegal_values = values <= 0
-            if np.any(illegal_values):
-                values[illegal_values] = 10e-9
-                sys.stderr.write("Warning: illegal probability values(<= 0). These values replaced with machine precision value for float32\n")
+            assert(np.all(values > 0))
+            assert(np.all(values <= 1.0))
             values = values / np.sum(values)
             self.__values = -np.log(values)
         else:
             self.__values = values
+
+    def remapMembers(self, remapping):
+        self.__members = tuple(remapping[member] for member in self.members)
+
+    @property
+    def order(self):
+        return self.__order
 
     @property
     def members(self):
@@ -47,48 +48,46 @@ class Factor(object):
     def values(self):
         return self.__values
 
-    @values.setter
-    def values(self, value):
-        self.__values = value
-
     @property
-    def probs(self):
+    def probabilities(self):
         return np.exp(-self.__values)
-
-    @property
-    def order(self):
-        return self.__n
 
     @property
     def cardinalities(self):
         return self.values.shape
 
     def __str__(self):
-        members_str = "Members: " + (self.n * "%i ").rstrip(" ") % self.members
-        return members_str
+        self_str = "Factor with members: %s" % str(self.members) + " and cardinalities: %s" % str(self.cardinalities)
+        return self_str
 
 
 class GraphicalModel(object):
 
-    def __init__(self, factors, make_tree_decomposition=False, normalize_unary_with_pairwise=(False, None)):
+    def __init__(self, factors, make_tree_decomposition=False):
 
-        self.__factors = factors
+        self.__factors = deepcopy(factors)
 
-        # compute variable cardinalities
-        cardinalities_dict = {}
+        # assert factor uniqness
+        members = [factor.members for factor in self.__factors]
+        unique_members = list(set([factor.members for factor in self.__factors]))
+        assert(len(members) == len(unique_members))
+
+        # member remap
+        variables = set([member for factor in self.__factors for member in factor.members])
+        self.member_map = dict(enumerate(variables))
+        member_rmap = dict((v, k) for k, v in self.member_map.items())
+        print(member_rmap)
+        for factor in self.__factors:
+            factor.remapMembers(member_rmap)
+
+        # compute and check cardinalities of variables
+        self.__cardinalities = np.zeros(len(variables)).astype('int')
         for factor in self.__factors:
             for member, cardinality in zip(factor.members, factor.cardinalities):
-                if member in cardinalities_dict:
-                    if cardinalities_dict[member] != cardinality:
-                        sys.stderr.write("Error: variable %i has inconsistent cardinalities\n" % member)
-                        sys.exit(1)
+                if self.__cardinalities[member] > 0:
+                    assert(self.__cardinalities[member] == cardinality)
                 else:
-                    cardinalities_dict[member] = cardinality
-
-        self.__cardinalities = [1] * (max(cardinalities_dict.keys()) + 1)
-
-        for variable, cardinality in cardinalities_dict.items():
-            self.__cardinalities[variable] = cardinality
+                    self.__cardinalities[member] = cardinality
 
         self.map_members_index = dict([(factor.members, i) for i, factor in enumerate(self.__factors)])
 
@@ -198,10 +197,6 @@ class GraphicalModel(object):
         return self.__cardinalities
 
     @property
-    def average_element(self):
-        return np.average(np.hstack([np.abs(factor.values).ravel() for factor in self.factors]))
-
-    @property
     def n_values(self):
         return np.sum([np.prod(factor.values.shape) for factor in self.factors])
 
@@ -262,6 +257,7 @@ class GraphicalModel(object):
         return edge_mask
 
     def _constructOpenGMModel(self):
+
         openGMModel = opengm.graphicalModel(self.cardinalities, operator="adder")
 
         for factor in self.factors:
@@ -346,6 +342,8 @@ class GraphicalModel(object):
         inference_alg.infer()
         map_state = inference_alg.arg().astype('int')
 
+        print(map_state)
+
         if alg == 'Mqpbo':
             partial = inference_alg.partialOptimality()
             new_fg = self._insertObservation(map_state, partial)
@@ -358,7 +356,7 @@ class GraphicalModel(object):
 
         map_state[~variable_mask] = defaultvalue
 
-        return map_state
+        return [self.member_map[state] for state in map_state]
 
     def probInference(self, alg, params={}):
         gm = self._constructLibDAIModel()
