@@ -9,8 +9,14 @@ from copy import deepcopy
 
 import utils
 
+from itertools import product
+
 import opengm
 import dai
+
+
+EPSILON = 10e-8
+BIG_INT = 2 ** 32
 
 
 class Factor(object):
@@ -26,8 +32,9 @@ class Factor(object):
         assert(len(values.shape) == len(members))
 
         if probability:
-            assert(np.all(values > 0))
-            assert(np.all(values <= 1.0))
+            assert(np.all(values >= 0.0 - EPSILON))
+            assert(np.all(values <= 1.0 + EPSILON))
+            assert(np.abs((np.sum(values) - 1)) < EPSILON)
             values = values / np.sum(values)
             self.__values = -np.log(values)
         else:
@@ -35,6 +42,11 @@ class Factor(object):
 
     def remapMembers(self, remapping):
         self.__members = tuple(remapping[member] for member in self.members)
+
+        perm = np.argsort(self.members)
+
+        self.__members = tuple(np.array(self.__members)[perm])
+        self.__values = np.transpose(self.__values, perm)
 
     @property
     def order(self):
@@ -63,7 +75,7 @@ class Factor(object):
 
 class GraphicalModel(object):
 
-    def __init__(self, factors, make_tree_decomposition=False):
+    def __init__(self, factors):
 
         self.__factors = deepcopy(factors)
 
@@ -76,7 +88,6 @@ class GraphicalModel(object):
         variables = set([member for factor in self.__factors for member in factor.members])
         self.member_map = dict(enumerate(variables))
         member_rmap = dict((v, k) for k, v in self.member_map.items())
-        print(member_rmap)
         for factor in self.__factors:
             factor.remapMembers(member_rmap)
 
@@ -91,10 +102,11 @@ class GraphicalModel(object):
 
         self.map_members_index = dict([(factor.members, i) for i, factor in enumerate(self.__factors)])
 
-        if make_tree_decomposition:
-            self.tree_decomposition = self._treeDecomposition()
-            self.tree_decomposition_edge_mask = self._treeDecompositionEdgeMask()
+        #if make_tree_decomposition:
+        #    self.tree_decomposition = self._treeDecomposition()
+        #    self.tree_decomposition_edge_mask = self._treeDecompositionEdgeMask()
 
+    #TODO Refactor this function
     @staticmethod
     def generateRandomGrid(n, k, sigma, d_max, bias0=0.0, make_tree_decomposition=True):
         factor_list = []
@@ -200,69 +212,119 @@ class GraphicalModel(object):
     def n_values(self):
         return np.sum([np.prod(factor.values.shape) for factor in self.factors])
 
-    def _treeDecomposition(self):
+    def stateGenerator(self):
+        for state in product(*[range(c) for c in self.cardinalities]):
+            yield state
 
-        if self.max_order > 2:
-            raise NotImplemented
+    def mapBruteForce(self):
 
-        edges = [factor.members for factor in self.factors if len(factor.members) == 2]
+        state_generator = self.stateGenerator()
 
-        unary_factors = dict([(factor.members[0], factor) for factor in self.factors if len(factor.members) == 1])
-        pair_factors = dict([(factor.members, factor) for factor in self.factors if len(factor.members) == 2])
+        best_energy = BIG_INT
+        best_state = None
 
-        subtrees = utils.decomposeOnTrees(edges)
+        for state in state_generator:
+            energy = self.Energy(state)
+            if energy < best_energy:
+                best_energy = energy
+                best_state = state
 
-        edge_count = Counter([edge for tree in subtrees for edge in tree])
-        node_count = Counter([node for tree in subtrees for node in utils.listNodes(tree)])
+        return dict([(self.member_map[i], state) for i, state in enumerate(best_state)])
 
-        decompositions = []
+    def probInfBruteForce(self):
 
-        for tree in subtrees:
-            current_decomposition = []
-            current_unary = set()
-            for edge in tree:
-                pair_factor = deepcopy(pair_factors[edge])
-                pair_factor.values = pair_factor.values / edge_count[edge]
-                current_decomposition.append(pair_factor)
+        prob_table = np.zeros(self.cardinalities)
 
-                if edge[0] not in current_unary:
-                    unary_factor = deepcopy(unary_factors[edge[0]])
-                    unary_factor.values = unary_factor.values / node_count[edge[0]]
-                    current_decomposition.append(unary_factor)
+        for state in self.stateGenerator():
+            prob_table[tuple(state)] = np.exp(-self.Energy(state))
 
-                if edge[1] not in current_unary:
-                    unary_factor = deepcopy(unary_factors[edge[1]])
-                    unary_factor.values = unary_factor.values / node_count[edge[1]]
-                    current_decomposition.append(unary_factor)
+        Z = np.sum(prob_table)
 
-                current_unary.add(edge[0])
-                current_unary.add(edge[1])
+        marg_distrs = []
 
-            decompositions.append(GraphicalModel(current_decomposition))
+        for factor in self.factors:
+            members = factor.members
 
-        return decompositions
+            marg_card = [self.cardinalities[member] for member in members]
+            marg_distr = np.zeros(marg_card)
 
-    def _treeDecompositionEdgeMask(self):
+            for state in product(*[range(c) for c in marg_card]):
 
-        decomposition_edge_sets = [set([factor.members for factor in tree.factors if len(factor.members) == 2])
-                                   for tree in self.tree_decomposition]
+                index = [slice(None) for dummy in range(len(prob_table.shape))]
 
-        edge_mask = {}
+                for member, s in zip(members, state):
+                    index[member] = s
 
-        edges = [factor.members for factor in self.factors if len(factor.members) == 2]
+                marg_distr[state] = np.sum(prob_table[tuple(index)]) / Z
 
-        for i, j in edges:
-            edge_mask[(i, j)] = np.array([(i, j) in s for s in decomposition_edge_sets]).astype('bool')
+            marg_distrs.append(marg_distr)
 
-        return edge_mask
+        return marg_distrs
+
+    #def _treeDecomposition(self):
+
+    #   if self.max_order > 2:
+    #       raise NotImplemented
+
+    #   edges = [factor.members for factor in self.factors if len(factor.members) == 2]
+
+    #   unary_factors = dict([(factor.members[0], factor) for factor in self.factors if len(factor.members) == 1])
+    #   pair_factors = dict([(factor.members, factor) for factor in self.factors if len(factor.members) == 2])
+
+    #   subtrees = utils.decomposeOnTrees(edges)
+
+    #   edge_count = Counter([edge for tree in subtrees for edge in tree])
+    #   node_count = Counter([node for tree in subtrees for node in utils.listNodes(tree)])
+
+    #   decompositions = []
+
+    #   for tree in subtrees:
+    #       current_decomposition = []
+    #       current_unary = set()
+    #       for edge in tree:
+    #           pair_factor = deepcopy(pair_factors[edge])
+    #           pair_factor.values = pair_factor.values / edge_count[edge]
+    #           current_decomposition.append(pair_factor)
+
+    #           if edge[0] not in current_unary:
+    #               unary_factor = deepcopy(unary_factors[edge[0]])
+    #               unary_factor.values = unary_factor.values / node_count[edge[0]]
+    #               current_decomposition.append(unary_factor)
+
+    #           if edge[1] not in current_unary:
+    #               unary_factor = deepcopy(unary_factors[edge[1]])
+    #               unary_factor.values = unary_factor.values / node_count[edge[1]]
+    #               current_decomposition.append(unary_factor)
+
+    #           current_unary.add(edge[0])
+    #           current_unary.add(edge[1])
+
+    #       decompositions.append(GraphicalModel(current_decomposition))
+
+    #   return decompositions
+
+    #def _treeDecompositionEdgeMask(self):
+
+    #    decomposition_edge_sets = [set([factor.members for factor in tree.factors if len(factor.members) == 2])
+    #                               for tree in self.tree_decomposition]
+
+    #    edge_mask = {}
+
+    #    edges = [factor.members for factor in self.factors if len(factor.members) == 2]
+
+    #    for i, j in edges:
+    #        edge_mask[(i, j)] = np.array([(i, j) in s for s in decomposition_edge_sets]).astype('bool')
+
+    #    return edge_mask
 
     def _constructOpenGMModel(self):
 
         openGMModel = opengm.graphicalModel(self.cardinalities, operator="adder")
 
         for factor in self.factors:
+            members = tuple(map(int, list(factor.members)))
             func = openGMModel.addFunction(factor.values)
-            openGMModel.addFactor(func, factor.members)
+            openGMModel.addFactor(func, members)
 
         return openGMModel
 
@@ -271,7 +333,7 @@ class GraphicalModel(object):
         var_list = []
 
         for i, cardinality in enumerate(self.cardinalities):
-            var_list.append(dai.Var(i, cardinality))
+            var_list.append(dai.Var(int(i), int(cardinality)))
 
         factor_list = []
         for factor in self.factors:
@@ -291,6 +353,7 @@ class GraphicalModel(object):
         self.dai_factor_list = factor_list
         return dai_model
 
+    #TODO refactor this function
     def _insertObservation(self, observation, partial):
         if self.max_order > 2:
             raise NotImplemented
@@ -342,8 +405,6 @@ class GraphicalModel(object):
         inference_alg.infer()
         map_state = inference_alg.arg().astype('int')
 
-        print(map_state)
-
         if alg == 'Mqpbo':
             partial = inference_alg.partialOptimality()
             new_fg = self._insertObservation(map_state, partial)
@@ -356,7 +417,7 @@ class GraphicalModel(object):
 
         map_state[~variable_mask] = defaultvalue
 
-        return [self.member_map[state] for state in map_state]
+        return dict([(self.member_map[i], state) for i, state in enumerate(map_state)])
 
     def probInference(self, alg, params={}):
         gm = self._constructLibDAIModel()
