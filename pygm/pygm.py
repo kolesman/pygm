@@ -35,6 +35,8 @@ class Factor(object):
             assert(np.all(values >= 0.0 - EPSILON))
             assert(np.all(values <= 1.0 + EPSILON))
             assert(np.abs((np.sum(values) - 1)) < EPSILON)
+            values[values < 0.0] = 0.0
+            values[values > 1.0] = 1.0
             values = values / np.sum(values)
             self.__values = -np.log(values)
         else:
@@ -106,7 +108,25 @@ class GraphicalModel(object):
         #    self.tree_decomposition = self._treeDecomposition()
         #    self.tree_decomposition_edge_mask = self._treeDecompositionEdgeMask()
 
-    #TODO Refactor this function
+    @staticmethod
+    def generateRandomTree(n, k, sigma, expectation_children=2):
+
+        factor_list = []
+
+        for i in range(n):
+            members = (i, )
+            values = np.random.normal(0, sigma, k)
+            factor_list.append(Factor(members, values))
+
+        edges = utils.generateRandomTree(n, expectation_children)
+
+        for edge in edges:
+            members = edge
+            values = np.random.normal(0, sigma, (k, k))
+            factor_list.append(Factor(members, values))
+
+        return GraphicalModel(factor_list)
+
     @staticmethod
     def generateRandomGrid(n, k, sigma, d_max, bias0=0.0, make_tree_decomposition=True):
         factor_list = []
@@ -231,7 +251,7 @@ class GraphicalModel(object):
 
         return dict([(self.member_map[i], state) for i, state in enumerate(best_state)])
 
-    def probInfBruteForce(self):
+    def probabilityInferenceBruteForce(self):
 
         prob_table = np.zeros(self.cardinalities)
 
@@ -341,9 +361,9 @@ class GraphicalModel(object):
             factor_list.append(factor)
 
         for i, (dai_factor, factor) in enumerate(zip(factor_list, self.factors)):
-            values = factor.values.ravel()
+            values = np.exp(-factor.values.T.ravel())
             for j, value in enumerate(values):
-                dai_factor[j] = float(np.exp(-value))
+                dai_factor[j] = float(value)
 
         dai_vector_factors = dai.VecFactor()
         [dai_vector_factors.append(dai_factor) for dai_factor in factor_list]
@@ -444,7 +464,7 @@ class GraphicalModel(object):
             belief = prob_model.belief(dai_factor.vars())
             shape = tuple([self.cardinalities[member] for member in factor.members])
             values = np.array([belief[i] for i in range(np.prod(shape))])
-            factor_values.append(values.reshape(shape))
+            factor_values.append(values.reshape(shape).T)
 
         return factor_values
 

@@ -21,6 +21,26 @@ class MyPool(multiprocessing.pool.Pool):
     Process = NoDaemonProcess
 
 
+def generateRandomTree(n, expectation_children=1):
+
+    free_nodes = range(n)[::-1]
+    parent_queue = [free_nodes.pop()]
+
+    edges = []
+    while free_nodes:
+        parent = parent_queue.pop()
+        n_children = np.random.poisson(expectation_children) + 1
+        for dummy in range(n_children):
+            try:
+                child = free_nodes.pop()
+                parent_queue.insert(0, child)
+                edges.append((parent, child) if parent < child else (child, parent))
+            except IndexError:
+                pass
+
+    return edges
+
+
 def decomposeOnTrees(edges):
 
     edges = [{'members': edge, 'weight': 0} for edge in edges]
