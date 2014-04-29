@@ -33,11 +33,9 @@ class Factor(object):
 
         if probability:
             assert(np.all(values >= 0.0 - EPSILON))
-            assert(np.all(values <= 1.0 + EPSILON))
-            assert(np.abs((np.sum(values) - 1)) < EPSILON)
             values[values < 0.0] = 0.0
-            values[values > 1.0] = 1.0
             values = values / np.sum(values)
+            values[values > 1.0] = 1.0
             self.__values = -np.log(values)
         else:
             self.__values = values
@@ -128,24 +126,22 @@ class GraphicalModel(object):
         return GraphicalModel(factor_list)
 
     @staticmethod
-    def generateRandomGrid(n, k, sigma, d_max, bias0=0.0, make_tree_decomposition=True):
+    def generateRandomGrid(n, k, sigma, submodular=True):
         factor_list = []
         for i in range(n):
             for j in range(n):
                 members = (i + j * n, )
-                #values = np.sort(np.random.normal(0, sigma, k))
-                values = np.random.normal(0, sigma, k)
-                values[0] -= bias0
+                values = np.abs(np.random.normal(0, sigma, k))
                 f = Factor(members, values)
                 factor_list.append(f)
             for j in range(1, n):
                 for members in [(i * n + (j - 1), i * n + j), ((j - 1) * n + i, j * n + i)]:
-                    values = d_max * np.abs(np.random.normal(0, sigma, (k, k)))
-                    values[0][0] -= bias0
-                    values[np.diag_indices(k)] = 0.0
+                    values = np.abs(np.random.normal(0, sigma, (k, k)))
+                    if submodular:
+                        values[np.diag_indices(k)] = 0.0
                     f = Factor(members, values)
                     factor_list.append(f)
-        return GraphicalModel(factor_list, make_tree_decomposition=make_tree_decomposition)
+        return GraphicalModel(factor_list)
 
     @staticmethod
     def loadFromH5(file_name):
@@ -251,7 +247,7 @@ class GraphicalModel(object):
 
         return dict([(self.member_map[i], state) for i, state in enumerate(best_state)])
 
-    def probabilityInferenceBruteForce(self):
+    def beliefsBruteForce(self, additional_members=[]):
 
         prob_table = np.zeros(self.cardinalities)
 
@@ -261,25 +257,30 @@ class GraphicalModel(object):
         Z = np.sum(prob_table)
 
         marg_distrs = []
+        additional_ditrs = []
 
-        for factor in self.factors:
-            members = factor.members
+        for marginal_list, member_list in [(marg_distrs, [factor.members for factor in self.factors]),
+                                           (additional_ditrs, additional_members)]:
+            for members in member_list:
 
-            marg_card = [self.cardinalities[member] for member in members]
-            marg_distr = np.zeros(marg_card)
+                marg_card = [self.cardinalities[member] for member in members]
+                marg_distr = np.zeros(marg_card)
 
-            for state in product(*[range(c) for c in marg_card]):
+                for state in product(*[range(c) for c in marg_card]):
 
-                index = [slice(None) for dummy in range(len(prob_table.shape))]
+                    index = [slice(None) for dummy in range(len(prob_table.shape))]
 
-                for member, s in zip(members, state):
-                    index[member] = s
+                    for member, s in zip(members, state):
+                        index[member] = s
 
-                marg_distr[state] = np.sum(prob_table[tuple(index)]) / Z
+                    marg_distr[state] = np.sum(prob_table[tuple(index)]) / Z
 
-            marg_distrs.append(marg_distr)
+                marginal_list.append(marg_distr)
 
-        return marg_distrs
+        if additional_ditrs:
+            return marg_distrs, additional_ditrs
+        else:
+            return marg_distrs
 
     #def _treeDecomposition(self):
 
