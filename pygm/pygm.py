@@ -40,14 +40,6 @@ class Factor(object):
         else:
             self.__values = values
 
-    def remapMembers(self, remapping):
-        self.__members = tuple(remapping[member] for member in self.members)
-
-        perm = np.argsort(self.members)
-
-        self.__members = tuple(np.array(self.__members)[perm])
-        self.__values = np.transpose(self.__values, perm)
-
     @property
     def order(self):
         return self.__order
@@ -81,18 +73,15 @@ class GraphicalModel(object):
 
         # assert factor uniqness
         members = [factor.members for factor in self.__factors]
-        unique_members = list(set([factor.members for factor in self.__factors]))
+        unique_members = list(set(members))
         assert(len(members) == len(unique_members))
 
-        # member remap
-        variables = set([member for factor in self.__factors for member in factor.members])
-        self.member_map = dict(enumerate(variables))
-        member_rmap = dict((v, k) for k, v in self.member_map.items())
-        for factor in self.__factors:
-            factor.remapMembers(member_rmap)
+        # check numeration. Shoud start from zero and be consecutive
+        node_set = set([node for tuples in members for node in tuples])
+        assert(list(node_set) == range(len(node_set)))
 
         # compute and check cardinalities of variables
-        self.__cardinalities = np.zeros(len(variables)).astype('int')
+        self.__cardinalities = np.zeros(len(node_set)).astype('int')
         for factor in self.__factors:
             for member, cardinality in zip(factor.members, factor.cardinalities):
                 if self.__cardinalities[member] > 0:
@@ -101,10 +90,6 @@ class GraphicalModel(object):
                     self.__cardinalities[member] = cardinality
 
         self.map_members_index = dict([(factor.members, i) for i, factor in enumerate(self.__factors)])
-
-        #if make_tree_decomposition:
-        #    self.tree_decomposition = self._treeDecomposition()
-        #    self.tree_decomposition_edge_mask = self._treeDecompositionEdgeMask()
 
     @staticmethod
     def generateRandomTree(n, k, sigma, expectation_children=2):
@@ -245,9 +230,9 @@ class GraphicalModel(object):
                 best_energy = energy
                 best_state = state
 
-        return dict([(self.member_map[i], state) for i, state in enumerate(best_state)])
+        return np.array(best_state)
 
-    def beliefsBruteForce(self, additional_members=[]):
+    def beliefsBruteForce(self):
 
         prob_table = np.zeros(self.cardinalities)
 
@@ -257,10 +242,8 @@ class GraphicalModel(object):
         Z = np.sum(prob_table)
 
         marg_distrs = []
-        additional_ditrs = []
 
-        for marginal_list, member_list in [(marg_distrs, [factor.members for factor in self.factors]),
-                                           (additional_ditrs, additional_members)]:
+        for marginal_list, member_list in [(marg_distrs, [factor.members for factor in self.factors])]:
             for members in member_list:
 
                 marg_card = [self.cardinalities[member] for member in members]
@@ -277,66 +260,7 @@ class GraphicalModel(object):
 
                 marginal_list.append(marg_distr)
 
-        if additional_ditrs:
-            return marg_distrs, additional_ditrs
-        else:
-            return marg_distrs
-
-    #def _treeDecomposition(self):
-
-    #   if self.max_order > 2:
-    #       raise NotImplemented
-
-    #   edges = [factor.members for factor in self.factors if len(factor.members) == 2]
-
-    #   unary_factors = dict([(factor.members[0], factor) for factor in self.factors if len(factor.members) == 1])
-    #   pair_factors = dict([(factor.members, factor) for factor in self.factors if len(factor.members) == 2])
-
-    #   subtrees = utils.decomposeOnTrees(edges)
-
-    #   edge_count = Counter([edge for tree in subtrees for edge in tree])
-    #   node_count = Counter([node for tree in subtrees for node in utils.listNodes(tree)])
-
-    #   decompositions = []
-
-    #   for tree in subtrees:
-    #       current_decomposition = []
-    #       current_unary = set()
-    #       for edge in tree:
-    #           pair_factor = deepcopy(pair_factors[edge])
-    #           pair_factor.values = pair_factor.values / edge_count[edge]
-    #           current_decomposition.append(pair_factor)
-
-    #           if edge[0] not in current_unary:
-    #               unary_factor = deepcopy(unary_factors[edge[0]])
-    #               unary_factor.values = unary_factor.values / node_count[edge[0]]
-    #               current_decomposition.append(unary_factor)
-
-    #           if edge[1] not in current_unary:
-    #               unary_factor = deepcopy(unary_factors[edge[1]])
-    #               unary_factor.values = unary_factor.values / node_count[edge[1]]
-    #               current_decomposition.append(unary_factor)
-
-    #           current_unary.add(edge[0])
-    #           current_unary.add(edge[1])
-
-    #       decompositions.append(GraphicalModel(current_decomposition))
-
-    #   return decompositions
-
-    #def _treeDecompositionEdgeMask(self):
-
-    #    decomposition_edge_sets = [set([factor.members for factor in tree.factors if len(factor.members) == 2])
-    #                               for tree in self.tree_decomposition]
-
-    #    edge_mask = {}
-
-    #    edges = [factor.members for factor in self.factors if len(factor.members) == 2]
-
-    #    for i, j in edges:
-    #        edge_mask[(i, j)] = np.array([(i, j) in s for s in decomposition_edge_sets]).astype('bool')
-
-    #    return edge_mask
+        return marg_distrs
 
     def _constructOpenGMModel(self):
 
@@ -358,7 +282,13 @@ class GraphicalModel(object):
 
         factor_list = []
         for factor in self.factors:
-            factor = dai.Factor(dai.VarSet(*[var_list[i] for i in factor.members]))
+            members = list(factor.members)
+
+            var_set = dai.VarSet(var_list[members[0]])
+            for var_number in members[1:]:
+                var_set.append(var_list[var_number])
+            factor = dai.Factor(var_set)
+
             factor_list.append(factor)
 
         for i, (dai_factor, factor) in enumerate(zip(factor_list, self.factors)):
@@ -373,35 +303,6 @@ class GraphicalModel(object):
 
         self.dai_factor_list = factor_list
         return dai_model
-
-    #TODO refactor this function
-    def _insertObservation(self, observation, partial):
-        if self.max_order > 2:
-            raise NotImplemented
-
-        observation_dict = dict([(i, single) for i, (take, single) in enumerate(zip(partial, observation)) if take])
-
-        new_factors = []
-        for factor in self.__factors:
-            members = factor.members
-            if len(members) == 1:
-                if members[0] in observation_dict:
-                    new_factor = Factor(members, [1.0], probability=True)
-                else:
-                    new_factor = factor
-            if len(members) == 2:
-                if members[0] in observation_dict and members[1] in observation_dict:
-                    new_factor = Factor(members, [[1.0]], probability=True)
-                elif members[0] in observation_dict:
-                    obs = observation_dict[members[0]]
-                    new_factor = Factor(members, [factor.probs[obs]], probability=True)
-                elif members[1] in observation_dict:
-                    obs = observation_dict[members[1]]
-                    new_factor = Factor(members, np.array([factor.probs[:, obs]]).T, probability=True)
-                else:
-                    new_factor = factor
-            new_factors.append(new_factor)
-        return GraphicalModel(new_factors)
 
     def variableList(self):
         variable_set = set(list(sum([factor.members for factor in self.factors], ())))
@@ -426,19 +327,7 @@ class GraphicalModel(object):
         inference_alg.infer()
         map_state = inference_alg.arg().astype('int')
 
-        if alg == 'Mqpbo':
-            partial = inference_alg.partialOptimality()
-            new_fg = self._insertObservation(map_state, partial)
-            comp_map_state = new_fg.getMapState('TrwsExternal', {'steps': 10})
-            map_state[~partial] = comp_map_state[~partial]
-
-        variable_list = self.variableList()
-        variable_mask = np.zeros(self.n_vars).astype('bool')
-        variable_mask[variable_list] = True
-
-        map_state[~variable_mask] = defaultvalue
-
-        return dict([(self.member_map[i], state) for i, state in enumerate(map_state)])
+        return map_state
 
     def probInference(self, alg, params={}):
         gm = self._constructLibDAIModel()

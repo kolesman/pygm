@@ -2,23 +2,32 @@ import numpy as np
 
 from collections import namedtuple
 
-import multiprocessing
-import multiprocessing.pool
+import pygm
 
 
-class NoDaemonProcess(multiprocessing.Process):
+def remapFactor(factor, remapping):
+    members = tuple(remapping[member] for member in factor.members)
 
-    def _get_daemon(self):
-        return False
+    perm = np.argsort(members)
 
-    def _set_daemon(self, value):
-        pass
+    new_members = tuple(np.array(members)[perm])
+    new_values = np.transpose(factor.values, perm)
 
-    daemon = property(_get_daemon, _set_daemon)
+    return pygm.Factor(new_members, new_values)
 
 
-class MyPool(multiprocessing.pool.Pool):
-    Process = NoDaemonProcess
+def fixNumeration(factors):
+
+    new_factors = []
+
+    variables = set([member for factor in factors for member in factor.members])
+    member_rmap = dict(enumerate(variables))
+    member_map = dict((v, k) for k, v in member_rmap.items())
+    for factor in factors:
+        new_factor = remapFactor(factor, member_map)
+        new_factors.append(new_factor)
+
+    return new_factors, member_map
 
 
 def generateRandomTree(n, expectation_children=1):
