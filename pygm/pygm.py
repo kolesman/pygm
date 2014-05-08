@@ -1,8 +1,6 @@
 import sys
 import numpy as np
 
-from compiler.ast import flatten
-
 from collections import defaultdict, Counter
 import time
 from copy import deepcopy
