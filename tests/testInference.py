@@ -9,6 +9,9 @@ import pygm.PGM as PGM
 import pygm.utils as utils
 
 
+np.random.seed(31337)
+
+
 class testInference(unittest.TestCase):
 
     def setUp(self):
@@ -39,7 +42,7 @@ class testInference(unittest.TestCase):
 
         # Generate random models
         self.random_test_models = []
-        for i in range(5):
+        for i in range(10):
             random_model = PGM.GraphicalModel.generateRandomGrid(3, 2, 10, submodular=True)
             map_state = random_model.mapBruteForce()
             beliefs = random_model.beliefsBruteForce()
