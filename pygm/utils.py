@@ -13,7 +13,7 @@ def remapFactor(factor, remapping):
     new_members = tuple(np.array(members)[perm])
     new_values = np.transpose(factor.values, perm)
 
-    return pygm.Factor(new_members, new_values)
+    return pygm.PGM.Factor(new_members, new_values)
 
 
 def fixNumeration(factors):
