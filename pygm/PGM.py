@@ -361,6 +361,15 @@ class GraphicalModel(object):
         return value
 
 
+def inferMapTrws(factors):
+
+    gm = GraphicalModel([Factor(factor[0], factor[1]) for factor in factors])
+
+    map_state = gm.getMapState('TrwsExternal', {})
+
+    return map_state
+
+
 def main():
     return 0
 
